@@ -1,0 +1,86 @@
+
+
+Let's say we want to be able to define new functions interactively.
+But our chip's code is in ROM!..
+The way FORTH gets around this is:
+Each word has a pointer to its code (so, always to ROM in our case).
+For built-in (CODE) words, that code implements the word's behaviour directly.
+For defined (COLON) words, that code is called ENTER, and it executes the next word after the code pointer.
+See: https://www.bradrodriguez.com/papers/moving1.htm
+
+
+Now, can we do something like that with a lang which stores programs on the stack?..
+
+    [1 2 +] =f
+
+We could also have a language which runs on my laptop, and sends commands to a "kernel"
+living on the MCU.
+So, remove the burden of parsing, symbol tables, etc from the MCU.
+However, we do want the ability to define & call functions, and kick off tasks, etc
+on the MCU!..
+
+If we forget about function pointers and stuff, and just think about a kernel executing
+commands, we could have something like a BF kernel.
+Immediate commands: "<>.,+-"
+But what about "[]"?..
+We need "[" to tell the kernel to enter "compilation mode".
+Or, we do the compilation ourselves, and instead have words which are used to send and
+execute compiled stuff to the kernel!
+That makes much more sense. Individual "<>.,+-" commands is no longer needed: we can
+always just send & execute code.
+Hmmmm, how about instructions for:
+* Allocating & freeing memory
+* Reading & writing memory
+* Executing stuff in memory
+
+Keep in mind, instructions need to support retured values from the kernel as well.
+How about this as a protocol:
+
+    m X -> Y: malloc X bytes and return their address Y (or -1 if OOM)
+    f X: free the space at address X
+    r X Y: read Y bytes of memory at address X
+    w X Y: write Y bytes of memory at address X
+    x X: execute the instructions at address X
+
+The allocation scheme can just be a giant stack to begin with.
+Each allocated block begins with a pointer to the previous block.
+Freeing a block also frees all blocks allocated after it.
+
+OH WAIT!.. why not handle allocation on the laptop as well?!?!
+We can have a kind of simulated view of the chip.
+Really, all we need our kernel to do is read/write data, and execute code.
+For executing code, we just need to be able to set a couple of registers,
+and then JMP to some instruction in ROM.
+This allows us to later on have multiple programming language kernels with
+different entry points in ROM, and the "loader kernel" can run any of them,
+pointing them at the appropriate instructions in RAM.
+So:
+
+    x X Y: execute the instructions at RAM address Y using kernel at ROM address X
+
+And ideally, we would have a way for a "language kernel" to communicate back
+to the laptop when it's finished execution.
+So... another protocol?..
+Just have one magic byte, like NUL or '\' or something, which can be used to begin
+commands. All other bytes are transmitted as-is.
+At the very least, we need a command meaning "I'm done execution", so laptop knows
+it should switch back to the "loader kernel" protocol.
+And then, we need a BIOS/stdlib living in ROM, with getchar/putchar/exit, which know
+how to "escape" the magic byte (by sending/recognizing 2 of it in a row, or whatever).
+These functions should presumably disable any interrupts which could communicate
+with the laptop!..
+
+
+And now, let's consider a "BF kernel".
+It's... literally just a BF implementation now, it doesn't need to know about
+compilation or memory allocation or any of that!
+
+
+HOW TO COMPILE STUFF AND SEND IT, WITHOUT USING ARDUINO IDE/CLI:
+https://www.tonymitchell.ca/posts/setup-avr-toolchain-on-linux/
+
+    avr-gcc blink.c -o blink.elf -mmcu=atmega328 -DF_CPU=16000000UL -Os
+    avr-objcopy blink.elf -O ihex blink.hex
+    avrdude -c arduino -p m328p -U flash:w:"blink.hex":a -P /dev/ttyACM0
+
+
