@@ -1,1 +1,18 @@
-...that's the name of my MCU
+https://en.wikipedia.org/wiki/ATmega328
+> A common alternative to the ATmega328 is the "picoPower" ATmega328P.
+
+CPU type	8-bit AVR
+Maximum CPU speed	20 MHz
+Performance	20 MIPS at 20 MHz
+Flash memory	32 KB
+    Program memory
+    Boot loader lives at the bottom
+    Unlimited writes, but can only write entire pages at a time
+    See "AVR109: Self Programming": https://ww1.microchip.com/downloads/en/AppNotes/doc1644.pdf
+SRAM	2 KB
+    Data memory
+EEPROM	1 KB
+    Unlike flash, can write individual bytes, but has limited writes over its lifetime
+    Max 100,000 writes, says https://en.wikipedia.org/wiki/AVR_microcontrollers
+    Could be used for e.g. persistent configuration, says http://rjhcoding.com/avr-asm-memory-types.php
+    So, basically like the "hard drive"

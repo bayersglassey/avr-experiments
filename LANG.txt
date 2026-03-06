@@ -175,3 +175,151 @@ Let's call them "cp" and "dp" for short: code pointers and data pointers.
 
 What is avr-gcc's calling convention?..
 
+    int add(int x, int y) { return x + y; }
+    uint8_t add8(uint8_t x, uint8_t y) { return x + y; }
+    int add3(int x, int y, int z) { return x + y + z; }
+    uint8_t add38(uint8_t x, uint8_t y, uint8_t z) { return x + y + z; }
+
+    000000a6 <add>:
+    a6:   86 0f           add     r24, r22
+    a8:   97 1f           adc     r25, r23
+    aa:   08 95           ret
+
+    000000ac <add8>:
+    ac:   86 0f           add     r24, r22
+    ae:   08 95           ret
+
+    000000b0 <add3>:
+    b0:   86 0f           add     r24, r22
+    b2:   97 1f           adc     r25, r23
+    b4:   84 0f           add     r24, r20
+    b6:   95 1f           adc     r25, r21
+    b8:   08 95           ret
+
+    000000ba <add38>:
+    ba:   64 0f           add     r22, r20
+    bc:   86 0f           add     r24, r22
+    be:   08 95           ret
+
+First of all, for a given register pair e.g. (r24, r25) when we only need 8 bits, we
+use the lower register, e.g. r24.
+(Registers start from r0, by the way.)
+So, instead of listing register pairs, let's just list the lower one.
+E.g. we'll just say r24 instead of (r24, r25).
+
+Second of all, looks like return value and first argument are both r24.
+The arguments are: r24, r22, r20, r18, ...etc
+
+Now, let's look at pointers:
+
+    int incp(int *x) { return *x + 1; }
+    void incpp(int *x) { *x += 1; }
+
+    000000c0 <incp>:
+    c0:   fc 01           movw    r30, r24
+    c2:   80 81           ld      r24, Z
+    c4:   91 81           ldd     r25, Z+1        ; 0x01
+    c6:   01 96           adiw    r24, 0x01       ; 1
+    c8:   08 95           ret
+
+    000000ca <incpp>:
+    ca:   fc 01           movw    r30, r24
+    cc:   20 81           ld      r18, Z
+    ce:   31 81           ldd     r19, Z+1        ; 0x01
+    d0:   2f 5f           subi    r18, 0xFF       ; 255
+    d2:   3f 4f           sbci    r19, 0xFF       ; 255
+    d4:   31 83           std     Z+1, r19        ; 0x01
+    d6:   20 83           st      Z, r18
+    d8:   08 95           ret
+
+Ok, so Z is r30. Presumably X=r34, Y=r32, Z=r30. (NO!.. docs say X=r26, Y=r28, Z=r30.)
+(Ah, also docs say there are 32 registers in total. So Z's r30+r31 are the last 2.)
+(Ah, and first arg / return value is r24, which is next register pair below X.)
+We can MOV a word (i.e. a 16-bit value) with MOVW (and "add immediate" to it with ADIW).
+We can LD a byte at a time; not sure how LDD differs from LD, maybe they're
+the same instruction but have different assembly representations?..
+Like, clearly LD is used with Z and LDD with Z+1, but is it even possible to
+do the reverse, i.e. use LD with Z+1 and LDD with Z?
+Well anyway.
+
+How do function pointers work?
+
+    int h(void fp(int *, int *)) { static int x = 2, y = 3; fp(&x, &y); return x + y; }
+
+    00000186 <h>:
+    186:   fc 01           movw    r30, r24
+    188:   60 e0           ldi     r22, 0x00       ; 0
+    18a:   71 e0           ldi     r23, 0x01       ; 1
+    18c:   82 e0           ldi     r24, 0x02       ; 2
+    18e:   91 e0           ldi     r25, 0x01       ; 1
+    190:   09 95           icall
+    192:   20 91 02 01     lds     r18, 0x0102     ; 0x800102 <x.1698>
+    196:   30 91 03 01     lds     r19, 0x0103     ; 0x800103 <x.1698+0x1>
+    19a:   80 91 00 01     lds     r24, 0x0100     ; 0x800100 <__DATA_REGION_ORIGIN__>
+    19e:   90 91 01 01     lds     r25, 0x0101     ; 0x800101 <__DATA_REGION_ORIGIN__+0x1>
+    1a2:   82 0f           add     r24, r18
+    1a4:   93 1f           adc     r25, r19
+    1a6:   08 95           ret
+
+Per instruction set docs: https://ww1.microchip.com/downloads/en/DeviceDoc/AVR-Instruction-Set-Manual-DS40002198A.pdf
+...apparently ICALL is an Indirect Call to Z.
+
+    allows a call to a subroutine within the lowest 64K words (128 KB) section in the program memory space
+
+To access the full program memory space, you need to use EICALL (the E is for Extended), which
+calls Z + EIND.
+
+    This instruction allows for indirect calls to the entire 4M (words) program memory space
+
+The 328p only has 2KB of flash memory, so ICALL definitely suffices for us!..
+
+NOTE: apparently only Z can be used to access program memory!.. either with ICALL, or LPM, etc.
+So... that's going to be super important for an interpreted language.
+
+At this point, I found these explanations of avr-gcc's calling conventions etc:
+* https://gcc.gnu.org/wiki/avr-gcc
+* https://captdam.com/avr-call-stack/en
+
+
+
+Okay, it definitely looks to me like we want to do a stack-based language, with TOS (and NOS?.. nah)
+in registers, then use AVR's stack pointer for the data stack, and thennn for the call stack
+idunno.
+We need to use Z for IJMP constantly, so it'll keep getting clobbered.
+It points to flash mem, not SRAM, so it can't be the callstack pointer itself, because callstack
+pointer needs to point to our instructions, in SRAM.
+So maybe Y can be callstack?.. sometimes we need to save & restore it using data stack, but
+that's ok?..
+OOOOOHHH AND WE SHOULD TOTALLY IMPLEMENT SOME WORDS FOR MAPPING A SINGLE OPERATION OVER A
+VECTOR OF INTS
+Anyway.
+Instead of RET, our instructions should do what?.. IJMP to next instruction, right?
+
+    x 3 < if [...] end
+    x 3 < if [...] elif [x 5 <] [...] end
+    x 3 < if [...] elif [x 5 <] [...] else [...] end
+
+    while [...] [...]
+
+Or wait... if we use AVR's stack for data, that actually removes our ability to use
+CALL for assembly "functions".
+Which really sucks, because then how e.g. do you implement the instruction(s) for a
+while loop?.. where do you remember that you were doing a while loop?..
+It would be nice if "while loop" was an assembly "function", which could remember
+stuff (i.e. use local variables on the AVR stack) like what its condition and body are!..
+
+So okay, what's the data stack?.. presumably Y, yeah?..
+Both X and Y support push/pop type of things: "LD Rd, Y+" and "LD Rd, -Y".
+But unlike X, Y lets us do LDD (load indirect with displacement): "LDD Rd, Y+q" where 0 ≤ q ≤ 63.
+Which uhhh... is uhhhh... isn't that useful, somehow?
+Only if data stack is growing downwards, I guess. Cos then we can grab stuff from within it.
+
+    if x 3 < then ... end
+
+
+
+
+
+
+
+
