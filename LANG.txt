@@ -33,7 +33,7 @@ Hmmmm, how about instructions for:
 * Reading & writing memory
 * Executing stuff in memory
 
-Keep in mind, instructions need to support retured values from the kernel as well.
+Keep in mind, instructions need to support returned values from the kernel as well.
 How about this as a protocol:
 
     m X -> Y: malloc X bytes and return their address Y (or -1 if OOM)
@@ -54,9 +54,11 @@ and then JMP to some instruction in ROM.
 This allows us to later on have multiple programming language kernels with
 different entry points in ROM, and the "loader kernel" can run any of them,
 pointing them at the appropriate instructions in RAM.
-So:
+So, just:
 
-    x X Y: execute the instructions at RAM address Y using kernel at ROM address X
+    r X Y: read Y bytes of memory at RAM address X
+    w X Y: write Y bytes of memory at RAM address X
+    x X Y: execute the instructions at RAM address X using kernel at ROM address Y
 
 And ideally, we would have a way for a "language kernel" to communicate back
 to the laptop when it's finished execution.
@@ -69,6 +71,8 @@ And then, we need a BIOS/stdlib living in ROM, with getchar/putchar/exit, which 
 how to "escape" the magic byte (by sending/recognizing 2 of it in a row, or whatever).
 These functions should presumably disable any interrupts which could communicate
 with the laptop!..
+OOH OOH and the protocol needs a way for the chip to log debug messages!..
+That is, we should ideally have separate concepts of stdout and stderr...
 
 
 And now, let's consider a "BF kernel".
@@ -76,11 +80,98 @@ It's... literally just a BF implementation now, it doesn't need to know about
 compilation or memory allocation or any of that!
 
 
-HOW TO COMPILE STUFF AND SEND IT, WITHOUT USING ARDUINO IDE/CLI:
-https://www.tonymitchell.ca/posts/setup-avr-toolchain-on-linux/
+=================================================================================
 
-    avr-gcc blink.c -o blink.elf -mmcu=atmega328 -DF_CPU=16000000UL -Os
-    avr-objcopy blink.elf -O ihex blink.hex
-    avrdude -c arduino -p m328p -U flash:w:"blink.hex":a -P /dev/ttyACM0
+Actually let's think about a kernel for a tiny language.
+Let's use 16-bit values, so we can have pointers etc.
+* int
+    a 16-bit int
+    everything can be coerced to this!
+* byte
+    an int between 0 and 255 (show as hex, e.g. $ff for 255)
+* char
+    a byte intended to contain a text character
+* sym
+    a symbol is just an int! the symtable is managed on client side
+* mem
+    pointer to a block of memory, whose first entry is its size in bytes
+* str
+    a mem intended to contain text
+* array
+    a mem whose size should be a multiple of 2, containing an array of values
+* list
+    an array of 2 fields: the backing array, and current length (in entries)
+    each entry is a single value
+* obj
+    an array of 2 fields: the backing array, and current length (in entries)
+    each entry is a key followed by a value
+    must the keys be syms?.. or maybe they can just be any values?..
 
+Do we want to include types on our values?..
+Or a fancy lil C-style type system, but dynamic?..
+    int
+    char
+    sym
+    mem
+    array of T
+    struct
+    boxed
+
+NOT YET! Simple kernel for now, plz.
+So: everything is a 16-bit integer, and all that matters is what you do with it.
+Can we just use the chip's built-in stack?.. PUSH, POP, CALL, RET, etc?..
+Values on the stack will get return addresses dumped on top of them.
+So okay, let's have functions use named arguments, and grab them from *before*
+their return address?..
+
+    [x y -> z: x y + =z]
+
+Errr no wait, let's use registers, like we're supposed to?..
+
+    args1:
+    pop r16
+    pop r17
+    args2:
+    pop r18
+    pop r19
+    args3:
+    pop r20
+    pop r21
+
+Ah no, because they would get clobbered if we do another call before making use of them...
+
+Can we start with a kernel which can't "run code", but rather lets us directly control
+registers and memory?..
+Like, I want a way to remotely execute individual instructions. O_o
+
+
+
+The interpreter's main loop could consist of an actual loop which looks at "bytecodes" etc.
+Or we could use forth-style "threaded code", where code pointers are involved: we jump to
+code, as opposed to calling it, and simulate our own call stack.
+If we were to use bytecodes, we could use them as indices into a table of code pointers.
+
+    while (1) {
+        char inst = code[codeptr++];
+        switch (inst) {
+            ...etc...
+        }
+    }
+
+Versus... what does threaded code look like? Can it even be expressed in C?
+Probably not, because we want to be able to JMP.
+So if we're going to make a forth-like, then the kernel needs to use assembly.
+Which... is probably better for learning/resume purposes.
+So ok, let's make sure the kernel is in assembly, in any case.
+How about we start w/ an 8-bit language?.. errr but then it doesn't have pointers.
+
+
+Let's say our threaded code is a series of code pointers (into chip's program-space).
+When we execute a threaded instruction, it lives in RAM somewhere.
+
+Since AVR is Hardvard arch, there are different kinds of pointer: pointers into
+ROM, and pointers into RAM.
+Let's call them "cp" and "dp" for short: code pointers and data pointers.
+
+What is avr-gcc's calling convention?..
 

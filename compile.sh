@@ -6,6 +6,6 @@ avr-gcc \
     -Wall \
     -Wno-unused-function \
     -Os \
-    -o blink.elf blink.c
+    -o "$PROJFILE.elf" "$PROJFILE.c"
 
-avr-objcopy -j .text -j .data -O ihex blink.elf blink.hex
+avr-objcopy -j .text -j .data -O ihex "$PROJFILE.elf" "$PROJFILE.hex"

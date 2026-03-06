@@ -1,0 +1,6 @@
+#
+# To be sourced!
+# Expects the env var PROJECT to be set.
+#
+
+export PROJFILE="$PROJECT/$PROJECT"
