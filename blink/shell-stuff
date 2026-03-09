@@ -1,8 +1,0 @@
-#
-# Source this file to get some shell functions and stuff!..
-#
-
-d() {
-    # Assumes you've run ./dump_defines.sh
-    ack "#define $1" defines.txt
-}
