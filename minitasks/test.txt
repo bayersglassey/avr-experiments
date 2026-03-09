@@ -1,0 +1,53 @@
+# Set msg to point at the current top of the heap.
+# Every task has a stack and a heap, which grow towards each other.
+# All variables are 16-bit integers, which can also be interpreted as
+# as pointers.
+heap =msg
+
+loop {
+    # Call getc, putting this task to sleep & waking it up once a
+    # byte is available on its stdin
+    getc =c
+
+    # Push c onto the heap as a single byte
+    c hpushc
+
+    # If c was a NUL byte, exit the loop
+    c '\0' == if { break }
+}
+
+# At this point, msg points to a C-style string on the heap!..
+# Now we're going to repeatedly echo it back over stdout.
+loop {
+
+    # Set ptr to msg, i.e. the start of the string
+    msg =ptr
+
+    loop {
+        # Dereference ptr, getting a byte, and store that in c
+        ptr $c =c
+
+        # Break on NUL byte
+        c '\0' == if { break }
+
+        # Call putc, putting c in this task's stdout buffer, then
+        # putting this task to sleep & waking it up once the byte has
+        # been consumed
+        c putc
+
+        # Increment ptr
+        ptr 1 + =ptr
+    }
+
+    # Logging is sent directly through the USB to the Python client,
+    # using low-level assembly routines.
+    # That is, tasks don't have a separate stderr stream, rather logging
+    # is atomic and bypasses the OS.
+    # Why?.. because logging is for debugging purposes, of course!
+    # It would be harder to debug the OS if logging was tied up with it...
+    # Similarly, note how there's no attempt to dynamically build up a
+    # string to be logged.
+    "I said: " logs
+    msg logs
+    '\n' logc
+}

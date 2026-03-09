@@ -1,0 +1,165 @@
+
+    NOTE: in these crazy times, I must tell you that I did not use an LLM
+    for any part of this codebase or document.
+    I wrote it all myself, except where I explicitly give sources.
+    - Ben Ayers-Glassey, 2026
+
+
+###############################################################################
+### MINITASK
+
+It's a miniature multi-tasking operating system for the Arduino Nano, which is
+a little computer-on-a-chip.
+See also:
+* https://en.wikipedia.org/wiki/Arduino
+
+The purpose of this project is to let me experiment with the Arduino from my
+laptop, examining its memory on the fly, and sending it little programs to run,
+either as one-off commands or as concurrent tasks, with observable behaviour
+like toggling LEDs and sending bytes back over USB etc.
+Basically, it's a way to learn about embedded programming and realtime OS
+implementation.
+
+The core system (the multi-tasking OS) is written in C and assembly, using the
+standard AVR development toolchain: avr-gcc, avr-libc, avrdude, etc.
+See also:
+* https://www.nongnu.org/avr-libc/
+* https://github.com/avrdudes/avr-libc
+* https://github.com/avrdudes/avrdude
+
+The core of the OS (scheduler, resource queues, etc) is written in C.
+
+The commands/tasks you send to the OS use a tiny programming language, let's
+call it "tasklang", written in assembly.
+
+The client (which runs on my/your laptop, and talks to the OS over USB) is
+written in Python.
+
+
+###############################################################################
+### TASKLANG
+
+The "minitasks" system consists of a Python client sending little programs
+over USB to the OS on the Arduino.
+These little programs are written in a language called "tasklang".
+
+The language is vaguely FORTH-like: it's explicitly stack-based, and uses
+"threaded code" as its execution model, that is, "code" consists of arrays of
+pointers representing subroutine calls.
+However, unlike FORTH, tasklang doesn't come with its own compiler; instead,
+programs are compiled by the Python client, and the OS only needs to know how
+to run them.
+See also:
+* https://en.wikipedia.org/wiki/Forth_(programming_language)
+* https://en.wikipedia.org/wiki/Threaded_code
+
+The language is very simple: everything is an integer, integers can also be
+interpreted as pointers, all variables are global, and there is currently
+no way to define functions (so, all function calls are to built-in
+functions, implemented in assembly).
+
+However, the purpose of the language isn't to be expressive, but to be easy
+to reason about and debug, and just powerful enough to play with multitasking
+concepts like scheduling, resources, and inter-task communcation.
+
+Here's an example program, which does some math and then ends:
+
+    # Set x to 1 + 2.
+    # The "1" and "2" literals push their values onto the stack.
+    # The "+" operator pops 2 values off the stack, adds them together,
+    # and pushes the result onto the stack.
+    # For more information, read any basic FORTH tutorial!..
+    # As for "=x", that's not standard FORTH syntax: it means "pop a value
+    # from the stack and store it in the x variable".
+    1 2 + =x
+
+    # Set y to x * x.
+    # The meaning of "dup" is "duplicate the value on top of the stack", so
+    # "x dup" is equivalent to "x x".
+    x dup * =y
+
+    # Assert that x equals 3, and y equals 9.
+    # If an assertion fails, the task is stopped, but hangs around in memory
+    # so you can inspect it if you want.
+    x 3 == assert
+    y 9 == assert
+
+Here's another example program, which runs as a long-lived task.
+Its behaviour is to blink the Arduino's built-in LED on and off, once per
+second:
+
+    # Set the variable "led_state" to 0
+    0 =led_state
+
+    # Start an infinite loop
+    loop {
+        # Call the set_led function with one argument, the desired LED state
+        # (0 for off, 1 for on)
+        led_state set_led
+
+        # Reverse the desired LED state
+        led_state ! =led_state
+
+        # Ask the OS to put this task to sleep & wake it up in 1 second
+        sleep 1000
+    }
+
+Here's another example program.
+NOTE: Running a program creates a task with at least two associated byte
+streams: stdin and stdout (standard input/output).
+Streams can be hooked up directly to the Arduino's USB port, i.e. the Python
+client, or they can be hooked up to other tasks.
+
+    # Set msg to point at the current top of the heap.
+    # Every task has a stack and a heap, which grow towards each other.
+    # All variables are 16-bit integers, which can also be interpreted as
+    # as pointers.
+    heap =msg
+
+    loop {
+        # Call getc, putting this task to sleep & waking it up once a
+        # byte is available on its stdin
+        getc =c
+
+        # Push c onto the heap as a single byte
+        c hpushc
+
+        # If c was a NUL byte, exit the loop
+        c '\0' == if { break }
+    }
+
+    # At this point, msg points to a C-style string on the heap!..
+    # Now we're going to repeatedly echo it back over stdout.
+    loop {
+
+        # Set ptr to msg, i.e. the start of the string
+        msg =ptr
+
+        loop {
+            # Dereference ptr, getting a byte, and store that in c
+            ptr $c =c
+
+            # Break on NUL byte
+            c '\0' == if { break }
+
+            # Call putc, putting c in this task's stdout buffer, then
+            # putting this task to sleep & waking it up once the byte has
+            # been consumed
+            c putc
+
+            # Increment ptr
+            ptr 1 + =ptr
+        }
+
+        # Logging is sent directly through the USB to the Python client,
+        # using low-level assembly routines.
+        # That is, tasks don't have a separate stderr stream, rather logging
+        # is atomic and bypasses the OS.
+        # Why?.. because logging is for debugging purposes, of course!
+        # It would be harder to debug the OS if logging was tied up with it...
+        # Similarly, note how there's no attempt to dynamically build up a
+        # string to be logged.
+        "I said: " logs
+        msg logs
+        '\n' logc
+    }
