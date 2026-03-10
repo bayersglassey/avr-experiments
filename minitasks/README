@@ -130,11 +130,15 @@ client, or they can be hooked up to other tasks.
 
     # At this point, msg points to a C-style string on the heap!..
     # Now we're going to repeatedly echo it back over stdout.
+    # For fun, we'll keep track of how many times we echo it.
+    0 =n_echoes
+
     loop {
 
         # Set ptr to msg, i.e. the start of the string
         msg =ptr
 
+        # Loop over the characters in the string
         loop {
             # Dereference ptr, getting a byte, and store that in c
             ptr $c =c
@@ -151,15 +155,25 @@ client, or they can be hooked up to other tasks.
             ptr 1 + =ptr
         }
 
+        # Increment our echo counter
+        n_echoes 1 + =n_echoes
+
         # Logging is sent directly through the USB to the Python client,
         # using low-level assembly routines.
         # That is, tasks don't have a separate stderr stream, rather logging
         # is atomic and bypasses the OS.
         # Why?.. because logging is for debugging purposes, of course!
         # It would be harder to debug the OS if logging was tied up with it...
-        # Similarly, note how there's no attempt to dynamically build up a
-        # string to be logged.
-        "I said: " logs
-        msg logs
-        '\n' logc
+        # Anyway, if we want to log a dynamic message, we don't build a string
+        # on the heap!.. we log it in parts.
+        # We can use an atomic block to make sure other tasks don't log (or do
+        # anything else) while we're logging.
+        atomic {
+            "Echoed " logs
+            msg logs
+            ' ' logc
+            n_echoes logi
+            " times!\n" logs
+        }
     }
+

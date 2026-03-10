@@ -1,32 +1,114 @@
 import re
+from typing import NamedTuple, List, Dict, Set
+
+
+class Compilation(NamedTuple):
+    """Result of compiling some code"""
+    strings: Dict[str, int]
+    vars: Dict[str, int]
+    instructions: List[int]
+    builtin_locations: Set[int]
+
+    @property
+    def heap_size(self) -> int:
+        return (
+            sum(len(s) for s in self.strings) # the string bytes
+            + len(self.strings) # the NUL terminators
+            + 2 * len(self.vars) # 2 bytes per variable
+        )
+
+    @property
+    def heap(self) -> bytes:
+        size = self.heap_size
+        buf = bytearray(size)
+        for value, loc in self.strings.items():
+            buf[loc:loc + len(value)] = value.encode()
+        return bytes(buf)
+
+    def print_instructions(self):
+        for loc, i in enumerate(self.instructions):
+            if loc in self.builtin_locations:
+                i = BUILTINS[i]
+            print(f"{loc:03}: {i}")
+
+    def print(self):
+        print("vars:")
+        for var, loc in self.vars.items():
+            print(f"  {var}: {loc}")
+        print(f"heap: {self.heap}")
+        print("instructions:")
+        self.print_instructions()
 
 
 TOKEN_RE = re.compile(r' +|#.*|"([^"]|\\.)*"|\'\\?.\'|[^ ]+')
-NAME_RE = re.compile(r'(?:_|[a-zA-Z0-9])[a-zA-Z0-9]*')
+NAME_RE = re.compile(r'[_a-zA-Z][_a-zA-Z0-9]*')
 
+
+BLOCK_TOKENS = ('if', 'loop', 'atomic')
+BLOCK_TAGS = BLOCK_TOKENS + ('block',)
+
+
+# Maps tasklang symbols to names of OS builtin functions
 OPERATORS = {
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '<<',
-    '>>',
-    '==',
-    '!=',
-    '<',
-    '>',
-    '<=',
-    '>=',
-    '!',
-    '&',
-    '|',
-    '^',
-    '$',
-    '$c',
-    '=$',
-    '=$c',
+    '+': 'add',
+    '-': 'sub',
+    '*': 'mul',
+    '/': 'div',
+    '%': 'mod',
+    '1+': 'inc',
+    '1-': 'dec',
+    '<<': 'lshift',
+    '>>': 'rshift',
+    '==': 'eq',
+    '!=': 'ne',
+    '<': 'lt',
+    '>': 'gt',
+    '<=': 'le',
+    '>=': 'ge',
+    '!': 'bitnot',
+    '&': 'bitand',
+    '|': 'bitor',
+    '^': 'bitxor',
+    '$': 'getptr',
+    '$c': 'getptrc',
+    '=$': 'setptr',
+    '=$c': 'setptrc',
 }
+
+# OS builtin functions
+# (apart from the operators, which are listed separately, see OPERATORS)
+NAMED_BUILTINS = {
+    '_literal',
+    '_store',
+    '_load',
+    '_jump',
+    '_jumpif',
+    '_atomic',
+    '_end_atomic',
+    'dup',
+    'swap',
+    'drop',
+    'heap',
+    'hpush',
+    'hpop',
+    'hdrop',
+    'hpushc',
+    'hpopc',
+    'hdropc',
+    'assert',
+    'set_led',
+    'sleep',
+    'getc',
+    'putc',
+    'logs',
+    'logc',
+    'logi',
+    'logp',
+}
+
+# Maps builtin names to their index in the OS builtins table
+BUILTINS = sorted(OPERATORS.values()) + sorted(NAMED_BUILTINS)
+BUILTIN_INDEXES = {name: i for i, name in enumerate(BUILTINS)}
 
 
 def tokenize(line):
@@ -75,7 +157,7 @@ def _parse(tokens, expected=None):
     for line_i, token in tokens:
         try:
             if token in OPERATORS:
-                yield ('op', token)
+                yield ('builtin', OPERATORS[token])
             elif token[0] == '#':
                 pass
             elif token == '}':
@@ -83,13 +165,18 @@ def _parse(tokens, expected=None):
                     raise Exception("Unexpected '}'")
                 else:
                     return
-            elif token in ('if', 'loop'):
+            elif token in BLOCK_TOKENS:
                 expect('{')
                 body = _parse(tokens, '}')
                 yield (token, body)
+            elif token == '{':
+                body = _parse(tokens, '}')
+                yield ('block', body)
+            elif token in ('continue', 'break'):
+                yield (token, None)
             elif token[0] == "'":
                 c = _escaped(token[2]) if token[1] == '\\' else token[1]
-                yield ('char', c)
+                yield ('int', ord(c))
             elif token[0] == '"':
                 s = _parse_string(token)
                 yield ('string', s)
@@ -99,7 +186,10 @@ def _parse(tokens, expected=None):
             elif token[0] == '=' and NAME_RE.fullmatch(token[1:]):
                 yield ('assign', token[1:])
             elif NAME_RE.fullmatch(token):
-                yield ('name', token)
+                if token in NAMED_BUILTINS:
+                    yield ('builtin', token)
+                else:
+                    yield ('get', token)
             else:
                 raise Exception("Unrecognized token")
         except Exception as ex:
@@ -115,7 +205,7 @@ def ppt(parsed, depth=0):
     """Print parse tree, for debugging"""
     indent = '  ' * depth
     for t, v in parsed:
-        if t in ('if', 'loop'):
+        if t in BLOCK_TAGS:
             print(indent + f'{t}:')
             ppt(v, depth + 1)
         else:
@@ -125,19 +215,20 @@ def ppt(parsed, depth=0):
 def parse(lines):
     r"""
 
-        >>> ppt(parse('0 =i loop { i 3 < ! if { break } i 1 - =i }'))
+        >>> ppt(parse('0 =i loop { i 3 < ! if { break } i logi i 1- =i }'))
         int: 0
         assign: 'i'
         loop:
-          name: 'i'
+          get: 'i'
           int: 3
-          op: '<'
-          op: '!'
+          builtin: 'lt'
+          builtin: 'bitnot'
           if:
-            name: 'break'
-          name: 'i'
-          int: 1
-          op: '-'
+            break: None
+          get: 'i'
+          builtin: 'logi'
+          get: 'i'
+          builtin: 'dec'
           assign: 'i'
 
     """
@@ -148,3 +239,159 @@ def parse(lines):
             for token in tokenize(line):
                 yield line_i, token
     yield from _parse(get_tokens())
+
+
+def compile(parsed) -> Compilation:
+    r"""
+
+        >>> comp = compile(parse('''0 =i loop {
+        ...     i 3 < ! if { break }
+        ...     atomic { "hello " logs i logi " world" logi }
+        ...     i 1- =i
+        ... }'''))
+
+        >>> comp.strings
+        {'hello ': 2, ' world': 9}
+
+        >>> comp.vars
+        {'i': 0}
+
+        Heap contains two bytes at the start for variable 'i', then the
+        two strings with NUL terminators:
+        >>> comp.heap
+        b'\x00\x00hello \x00 world\x00'
+
+        >>> comp.print_instructions()
+        000: _literal
+        001: 0
+        002: _store
+        003: 0
+        004: _load
+        005: 0
+        006: _literal
+        007: 3
+        008: lt
+        009: bitnot
+        010: _jumpif
+        011: 14
+        012: _jump
+        013: 30
+        014: _atomic
+        015: _literal
+        016: 2
+        017: logs
+        018: _load
+        019: 0
+        020: logi
+        021: _literal
+        022: 9
+        023: logi
+        024: _end_atomic
+        025: _load
+        026: 0
+        027: dec
+        028: _store
+        029: 0
+        030: _jump
+        031: 4
+
+    """
+
+    strings: Dict[str, int] = {}
+    vars: Dict[str, int] = {}
+    vars_assigned: Set[str] = set()
+    instructions: List[int] = []
+    builtin_locations: Set[int] = set()
+
+    heap_offset = 0
+
+    def getvar(name: str) -> int:
+        nonlocal heap_offset
+        if name not in vars:
+            vars[name] = heap_offset
+            heap_offset += 2
+        return vars[name]
+
+    def get_string(value: str) -> int:
+        nonlocal heap_offset
+        if value not in strings:
+            strings[value] = heap_offset
+            heap_offset += len(value) + 1 # plus one for NUL terminator
+        return strings[value]
+
+    def push_builtin(builtin: str):
+        builtin_locations.add(len(instructions))
+        instructions.append(BUILTIN_INDEXES[builtin])
+
+    def push_value(value: int):
+        instructions.append(value)
+
+    def _process(parsed, strong_block=True, start_of_block=None, update_with_end_of_block=None):
+        if strong_block:
+            start_of_block = len(instructions)
+            update_with_end_of_block = []
+        for tag, data in parsed:
+            if tag == 'builtin':
+                push_builtin(data)
+            elif tag == 'if':
+                push_builtin('_jumpif')
+                i = len(instructions)
+                push_value(None) # jump location, updated below
+                _process(data, False, start_of_block, update_with_end_of_block)
+                instructions[i] = len(instructions) # update jump location
+            elif tag == 'loop':
+                i = len(instructions)
+                _process(data)
+                push_builtin('_jump')
+                push_value(i)
+            elif tag == 'atomic':
+                push_builtin('_atomic')
+                _process(data, False, start_of_block, update_with_end_of_block)
+                push_builtin('_end_atomic')
+            elif tag == 'block':
+                _process(data)
+            elif tag == 'continue':
+                push_builtin('_jump')
+                push_value(start_of_block)
+            elif tag == 'break':
+                push_builtin('_jump')
+                update_with_end_of_block.append(len(instructions))
+                # jump location, updated below (via update_with_end_of_block)
+                push_value(None)
+            elif tag == 'int':
+                push_builtin('_literal')
+                push_value(data)
+            elif tag == 'string':
+                push_builtin('_literal')
+                push_value(get_string(data))
+            elif tag == 'assign':
+                vars_assigned.add(data)
+                push_builtin('_store')
+                push_value(getvar(data))
+            elif tag == 'get':
+                push_builtin('_load')
+                push_value(getvar(data))
+            else:
+                raise Exception("Unrecognized tag: {tag!r}")
+
+        if strong_block:
+            # Update any instructions, e.g. break, which needed to know the
+            # location of the end of the block
+            end_of_block = len(instructions)
+            for i in update_with_end_of_block:
+                instructions[i] = end_of_block
+
+    # Recursively process the parse tree
+    _process(parsed)
+
+    # Verify that all variables are assigned to at least once
+    unassigned_vars = [v for v in vars if v not in vars_assigned]
+    if unassigned_vars:
+        raise Exception(f"Variables referred to, but never assigned to: {', '.join(unassigned_vars)}")
+
+    return Compilation(
+        strings=strings,
+        vars=vars,
+        instructions=instructions,
+        builtin_locations=builtin_locations,
+    )
