@@ -1,6 +1,8 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
-// TAKEN FROM: https://dev.to/heymrdj/digging-deeper-led-blink-from-arduino-c-and-avr-assembly-3a92
+// BASED ON: https://dev.to/heymrdj/digging-deeper-led-blink-from-arduino-c-and-avr-assembly-3a92
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#include <stdbool.h>
 
 // Default clock source is internal 8MHz RC oscillator
 // Taken from: https://github.com/m3y54m/start-avr
@@ -74,37 +76,32 @@ static void led_off(void) {
     PORTB &= ~(1 << PB5);
 }
 
-int add(int x, int y) { return x + y; }
-uint8_t add8(uint8_t x, uint8_t y) { return x + y; }
-int add3(int x, int y, int z) { return x + y + z; }
-uint8_t add38(uint8_t x, uint8_t y, uint8_t z) { return x + y + z; }
-int incp(int *x) { return *x + 1; }
-void incpp(int *x) { *x += 1; }
-int addp(int *x, int *y) { return *x + *y; }
-void addpp(int *x, int *y, int *result) { *result = *x + *y; }
-int f(int *x, int *y, void fp(int *, int *)) { fp(x, y); return *x + *y; }
-int g(void fp(int *, int *)) { int x = 2, y = 3; fp(&x, &y); return x + y; }
-int h(void fp(int *, int *)) { static int x = 2, y = 3; fp(&x, &y); return x + y; }
-
 
 int main(void) {
     led_init();
     uart_init();
-
-    (void)add(2, 3);
-    (void)add8(2, 3);
-    (void)add3(2, 3, 4);
-    (void)add38(2, 3, 4);
-    int x = 3, y = 4, z;
-    (void)addp(&x, &y);
-    (void)addpp(&x, &y, &z);
-
+    uint8_t i = 0;
     while (1) {
+        uart_put('H');
+        uart_put('e');
+        uart_put('l');
+        uart_put('l');
+        uart_put('o');
+        uart_put('!');
+        uart_put('\n');
+
         led_on();
         _delay_ms(1000);
+
+        for (uint8_t j = 0; j < i; j++) uart_put('A');
+        uart_put('H');
+        uart_put('!');
+        uart_put('\n');
+
         led_off();
         _delay_ms(1000);
-        uart_put('A');
+
+        i++;
     }
     return 0;
 }
