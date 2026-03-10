@@ -4,10 +4,25 @@ from typing import NamedTuple, List, Dict, Set
 
 class Compilation(NamedTuple):
     """Result of compiling some code"""
+
+    # Maps string literals to heap offsets
     strings: Dict[str, int]
+
+    # Maps global variable names to heap offsets
     vars: Dict[str, int]
+
+    # Maps function names to offsets within self.instructions
+    funcs: Dict[str, int]
+
     instructions: List[int]
+
+    # Marks indexes of self.instructions which are indexes into BUILTINS,
+    # and must be converted to actual memory addresses when loaded into
+    # the OS
     builtin_locations: Set[int]
+
+    # Index into self.instructions
+    entry_point: int
 
     @property
     def heap_size(self) -> int:
@@ -57,6 +72,8 @@ OPERATORS = {
     '%': 'mod',
     '1+': 'inc',
     '1-': 'dec',
+    '2+': 'inc2',
+    '2-': 'dec2',
     '<<': 'lshift',
     '>>': 'rshift',
     '==': 'eq',
@@ -65,7 +82,8 @@ OPERATORS = {
     '>': 'gt',
     '<=': 'le',
     '>=': 'ge',
-    '!': 'bitnot',
+    '!': 'not',
+    '~': 'bitnot',
     '&': 'bitand',
     '|': 'bitor',
     '^': 'bitxor',
@@ -75,16 +93,24 @@ OPERATORS = {
     '=$c': 'setptrc',
 }
 
-# OS builtin functions
-# (apart from the operators, which are listed separately, see OPERATORS)
-NAMED_BUILTINS = {
+# OS builtin functions which can't be used directly
+PRIVATE_BUILTINS = {
     '_literal',
     '_store',
     '_load',
+    '_store_local',
+    '_load_local',
+    '_call',
+    '_return',
     '_jump',
     '_jumpif',
     '_atomic',
     '_end_atomic',
+}
+
+# OS builtin functions which can be used directly
+PUBLIC_BUILTINS = {
+    'neg',
     'dup',
     'swap',
     'drop',
@@ -107,7 +133,10 @@ NAMED_BUILTINS = {
 }
 
 # Maps builtin names to their index in the OS builtins table
-BUILTINS = sorted(OPERATORS.values()) + sorted(NAMED_BUILTINS)
+BUILTINS = (
+    sorted(OPERATORS.values())
+    + sorted(PRIVATE_BUILTINS)
+    + sorted(PUBLIC_BUILTINS))
 BUILTIN_INDEXES = {name: i for i, name in enumerate(BUILTINS)}
 
 
@@ -149,58 +178,6 @@ def _parse_string(token):
     return ''.join(cc)
 
 
-def _parse(tokens, expected=None):
-    def expect(expected):
-        line_i, token = next(tokens)
-        if token != expected:
-            raise Exception(f"Expected {expected!r}, got {token!r}")
-    for line_i, token in tokens:
-        try:
-            if token in OPERATORS:
-                yield ('builtin', OPERATORS[token])
-            elif token[0] == '#':
-                pass
-            elif token == '}':
-                if expected != '}':
-                    raise Exception("Unexpected '}'")
-                else:
-                    return
-            elif token in BLOCK_TOKENS:
-                expect('{')
-                body = _parse(tokens, '}')
-                yield (token, body)
-            elif token == '{':
-                body = _parse(tokens, '}')
-                yield ('block', body)
-            elif token in ('continue', 'break'):
-                yield (token, None)
-            elif token[0] == "'":
-                c = _escaped(token[2]) if token[1] == '\\' else token[1]
-                yield ('int', ord(c))
-            elif token[0] == '"':
-                s = _parse_string(token)
-                yield ('string', s)
-            elif token.isdigit() or token[0] == '-' and token[1:].isdigit():
-                i = int(token)
-                yield ('int', i)
-            elif token[0] == '=' and NAME_RE.fullmatch(token[1:]):
-                yield ('assign', token[1:])
-            elif NAME_RE.fullmatch(token):
-                if token in NAMED_BUILTINS:
-                    yield ('builtin', token)
-                else:
-                    yield ('get', token)
-            else:
-                raise Exception("Unrecognized token")
-        except Exception as ex:
-            if expected is None:
-                raise Exception(f"At line {line_i + 1}, token {token!r}: {ex.__class__.__name__}: {ex}")
-            else:
-                raise
-    if expected is not None:
-        raise Exception(f"Expected: {expected!r}")
-
-
 def ppt(parsed, depth=0):
     """Print parse tree, for debugging"""
     indent = '  ' * depth
@@ -208,6 +185,10 @@ def ppt(parsed, depth=0):
         if t in BLOCK_TAGS:
             print(indent + f'{t}:')
             ppt(v, depth + 1)
+        elif t == 'def':
+            name, params, localvars, body = v
+            print(indent + f'{t} {" ".join([name] + params)}:')
+            ppt(body, depth + 1)
         else:
             print(indent + f'{t}: {v!r}')
 
@@ -217,19 +198,34 @@ def parse(lines):
 
         >>> ppt(parse('0 =i loop { i 3 < ! if { break } i logi i 1- =i }'))
         int: 0
-        assign: 'i'
+        store: 'i'
         loop:
-          get: 'i'
+          load: 'i'
           int: 3
           builtin: 'lt'
-          builtin: 'bitnot'
+          builtin: 'not'
           if:
             break: None
-          get: 'i'
+          load: 'i'
           builtin: 'logi'
-          get: 'i'
+          load: 'i'
           builtin: 'dec'
-          assign: 'i'
+          store: 'i'
+
+        >>> ppt(parse('def f x y { local z x y + =z z } def g { 10 * } ( 1 2 f ) g'))
+        def f x y:
+          load_local: 'x'
+          load_local: 'y'
+          builtin: 'add'
+          store_local: 'z'
+          load_local: 'z'
+        def g:
+          int: 10
+          builtin: 'mul'
+        int: 1
+        int: 2
+        call: 'f'
+        call: 'g'
 
     """
     if isinstance(lines, str):
@@ -238,7 +234,117 @@ def parse(lines):
         for line_i, line in enumerate(lines):
             for token in tokenize(line):
                 yield line_i, token
-    yield from _parse(get_tokens())
+    tokens = get_tokens()
+
+    predefs: Set[str] = set()
+    defs: Set[str] = set()
+    params: List[str] = []
+    localvars: List[str] = []
+    in_def: str = None
+
+    def _parse(expected=None):
+        nonlocal in_def
+        def expect(expected):
+            line_i, token = next(tokens)
+            if token != expected:
+                raise Exception(f"Expected {expected!r}, got {token!r}")
+        for line_i, token in tokens:
+            try:
+                if token in OPERATORS:
+                    yield ('builtin', OPERATORS[token])
+                elif token[0] == '#':
+                    # Comment
+                    pass
+                elif token in '()':
+                    # Parentheses can be used as a visual aid, to indicate
+                    # expected stack effects, e.g. "( 1 2 f ) ( 3 4 g ) h"
+                    # may be a bit clearer than "1 2 f 3 4 g h"
+                    pass
+                elif token == '}':
+                    if expected != '}':
+                        raise Exception("Unexpected '}'")
+                    else:
+                        return
+                elif token in BLOCK_TOKENS:
+                    expect('{')
+                    body = _parse('}')
+                    yield (token, body)
+                elif token == '{':
+                    body = _parse('}')
+                    yield ('block', body)
+                elif token in ('while', 'continue', 'break', 'return'):
+                    yield (token, None)
+                elif token[0] == "'":
+                    c = _escaped(token[2]) if token[1] == '\\' else token[1]
+                    yield ('int', ord(c))
+                elif token[0] == '"':
+                    s = _parse_string(token)
+                    yield ('string', s)
+                elif token.isdigit() or token[0] == '-' and token[1:].isdigit():
+                    i = int(token)
+                    yield ('int', i)
+                elif token[0] == '=' and NAME_RE.fullmatch(token[1:]):
+                    name = token[1:]
+                    if name in params or name in localvars:
+                        yield ('store_local', name)
+                    else:
+                        yield ('store', name)
+                elif token == 'local':
+                    line_i, name = next(tokens)
+                    if not in_def:
+                        raise Exception(f"Local {name!r} outside def")
+                    if name not in localvars:
+                        localvars.append(name)
+                elif token == 'predef':
+                    line_i, name = next(tokens)
+                    if in_def:
+                        raise Exception(f"Predef {name!r} inside def {in_def!r}")
+                    predefs.add(name)
+                elif token == 'def':
+                    line_i, name = next(tokens)
+                    if in_def:
+                        raise Exception(f"Def inside def: {name!r}")
+                    if name in defs:
+                        raise Exception(f"Already defined: {name!r}")
+                    defs.add(name)
+                    in_def = name
+                    params.clear()
+                    while True:
+                        line_i, name = next(tokens)
+                        if name == '{':
+                            break
+                        if name in params:
+                            raise Exception(f"Duplicate parameter: {name!r}")
+                        params.append(name)
+                    body = _parse('}')
+                    yield ('def', (in_def, params, localvars, body))
+                    localvars.clear()
+                    params.clear()
+                    in_def = None
+                elif NAME_RE.fullmatch(token):
+                    if token in PUBLIC_BUILTINS:
+                        yield ('builtin', token)
+                    elif token in predefs or token in defs:
+                        yield ('call', token)
+                    elif token in params or token in localvars:
+                        yield ('load_local', token)
+                    else:
+                        yield ('load', token)
+                else:
+                    raise Exception("Unrecognized token")
+            except Exception as ex:
+                if expected is None:
+                    raise Exception(f"At line {line_i + 1}, token {token!r}: {ex.__class__.__name__}: {ex}")
+                else:
+                    raise
+        if expected is not None:
+            raise Exception(f"Expected: {expected!r}")
+
+    missing_defs = [name for name in predefs if name not in defs]
+    if missing_defs:
+        raise Exception(f"Missing definitions for: {' '.join(missing_defs)}")
+
+    yield from _parse()
 
 
 def compile(parsed) -> Compilation:
@@ -271,7 +377,7 @@ def compile(parsed) -> Compilation:
         006: _literal
         007: 3
         008: lt
-        009: bitnot
+        009: not
         010: _jumpif
         011: 14
         012: _jump
@@ -299,9 +405,10 @@ def compile(parsed) -> Compilation:
 
     strings: Dict[str, int] = {}
     vars: Dict[str, int] = {}
-    vars_assigned: Set[str] = set()
+    funcs: Dict[str, int] = {}
     instructions: List[int] = []
     builtin_locations: Set[int] = set()
+    entry_point = 0
 
     heap_offset = 0
 
@@ -326,7 +433,7 @@ def compile(parsed) -> Compilation:
     def push_value(value: int):
         instructions.append(value)
 
-    def _process(parsed, strong_block=True, start_of_block=None, update_with_end_of_block=None):
+    def _process(parsed, strong_block=True, start_of_block=None, update_with_end_of_block=None, localvars=None):
         if strong_block:
             start_of_block = len(instructions)
             update_with_end_of_block = []
@@ -350,6 +457,11 @@ def compile(parsed) -> Compilation:
                 push_builtin('_end_atomic')
             elif tag == 'block':
                 _process(data)
+            elif tag == 'while':
+                push_builtin('_while')
+                update_with_end_of_block.append(len(instructions))
+                # jump location, updated below (via update_with_end_of_block)
+                push_value(None)
             elif tag == 'continue':
                 push_builtin('_jump')
                 push_value(start_of_block)
@@ -364,12 +476,17 @@ def compile(parsed) -> Compilation:
             elif tag == 'string':
                 push_builtin('_literal')
                 push_value(get_string(data))
-            elif tag == 'assign':
-                vars_assigned.add(data)
+            elif tag == 'store':
                 push_builtin('_store')
                 push_value(getvar(data))
-            elif tag == 'get':
+            elif tag == 'load':
                 push_builtin('_load')
+                push_value(getvar(data))
+            elif tag == 'store_local':
+                push_builtin('_store_local')
+                push_value(getvar(data))
+            elif tag == 'load_local':
+                push_builtin('_load_local')
                 push_value(getvar(data))
             else:
                 raise Exception("Unrecognized tag: {tag!r}")
@@ -384,14 +501,11 @@ def compile(parsed) -> Compilation:
     # Recursively process the parse tree
     _process(parsed)
 
-    # Verify that all variables are assigned to at least once
-    unassigned_vars = [v for v in vars if v not in vars_assigned]
-    if unassigned_vars:
-        raise Exception(f"Variables referred to, but never assigned to: {', '.join(unassigned_vars)}")
-
     return Compilation(
         strings=strings,
         vars=vars,
+        funcs=funcs,
         instructions=instructions,
         builtin_locations=builtin_locations,
+        entry_point=entry_point,
     )

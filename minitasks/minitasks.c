@@ -17,8 +17,14 @@
 // Maximum number of tasks in the system
 #define MAX_TASKS 32
 
+// Technically the size of a task's heap *and* stack, which grow towards each
+// other: the heap grows upwards, the stack downwards.
+// Also, the task's code lives on its heap!..
+#define HEAP_SIZE 1024
+
 struct task {
     // TODO...
+    char heap[HEAP_SIZE];
 };
 
 struct task TASKS[MAX_TASKS] = {0};

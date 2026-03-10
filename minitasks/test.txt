@@ -13,7 +13,7 @@ loop {
     c hpushc
 
     # If c was a NUL byte, exit the loop
-    c '\0' == if { break }
+    c while
 }
 
 # At this point, msg points to a C-style string on the heap!..
@@ -32,7 +32,7 @@ loop {
         ptr $c =c
 
         # Break on NUL byte
-        c '\0' == if { break }
+        c while
 
         # Call putc, putting c in this task's stdout buffer, then
         # putting this task to sleep & waking it up once the byte has
@@ -40,11 +40,11 @@ loop {
         c putc
 
         # Increment ptr
-        ptr 1 + =ptr
+        ptr 1+ =ptr
     }
 
     # Increment our echo counter
-    n_echoes 1 + =n_echoes
+    n_echoes 1+ =n_echoes
 
     # Logging is sent directly through the USB to the Python client,
     # using low-level assembly routines.
