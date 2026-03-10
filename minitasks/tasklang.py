@@ -1,15 +1,5 @@
 import re
-from typing import NamedTuple, Tuple, List, Dict, Set, Iterable, Any
-
-
-ParsedNode = Tuple[str, Any]
-
-class ParsedDef(NamedTuple):
-    params: List[str]
-    localvars: List[str]
-    body: Iterable[ParsedNode]
-
-Parsed = Tuple[Iterable[ParsedNode], Dict[str, ParsedDef]]
+from typing import NamedTuple, List, Dict, Set
 
 
 class Compilation(NamedTuple):
@@ -20,9 +10,6 @@ class Compilation(NamedTuple):
 
     # Maps global variable names to heap offsets
     vars: Dict[str, int]
-
-    # Maps function names to offsets within self.instructions
-    funcs: Dict[str, int]
 
     instructions: List[int]
 
@@ -41,6 +28,7 @@ class Compilation(NamedTuple):
 
     @property
     def heap(self) -> bytes:
+        """The heap (not including instructions)"""
         size = self.heap_size
         buf = bytearray(size)
         for value, loc in self.strings.items():
@@ -105,12 +93,9 @@ PRIVATE_BUILTINS = {
     '_literal',
     '_store',
     '_load',
-    '_store_local',
-    '_load_local',
-    '_call',
-    '_return',
     '_jump',
     '_jumpif',
+    '_while',
     '_atomic',
     '_end_atomic',
     '_halt',
@@ -118,7 +103,6 @@ PRIVATE_BUILTINS = {
 
 # OS builtin functions which can be used directly
 PUBLIC_BUILTINS = {
-    'neg',
     'dup',
     'swap',
     'drop',
@@ -148,7 +132,7 @@ BUILTINS = (
 BUILTIN_INDEXES = {name: i for i, name in enumerate(BUILTINS)}
 
 
-def tokenize(line: str) -> Iterable[str]:
+def tokenize(line):
     r"""
 
         >>> list(tokenize(r' 0 =i "Hello\nworld" { } # The rest is a comment'))
@@ -164,7 +148,7 @@ def tokenize(line: str) -> Iterable[str]:
             yield token
 
 
-def _escaped(c: str) -> str:
+def _escaped(c):
     return {
         '\\': '\\',
         'n': '\n',
@@ -172,7 +156,7 @@ def _escaped(c: str) -> str:
     }[c]
 
 
-def _parse_string(token: str) -> str:
+def _parse_string(token):
     cc = []
     escaping = False
     for c in token[1:-1]:
@@ -186,59 +170,93 @@ def _parse_string(token: str) -> str:
     return ''.join(cc)
 
 
-def ppt(parsed: Parsed):
-    """Print parse tree, for debugging"""
-    defs, nodes = parsed
-    def _pp_nodes(nodes, depth=1):
-        indent = '  ' * depth
-        for t, v in nodes:
-            if t in BLOCK_TAGS:
-                print(indent + f'{t}:')
-                _pp_nodes(v, depth + 1)
+def _parse(tokens, expected=None):
+    def expect(expected):
+        line_i, token = next(tokens)
+        if token != expected:
+            raise Exception(f"Expected {expected!r}, got {token!r}")
+    for line_i, token in tokens:
+        try:
+            if token in OPERATORS:
+                yield ('builtin', OPERATORS[token])
+            elif token[0] == '#':
+                # Comment
+                pass
+            elif token in '()':
+                # Parentheses can be used as a visual aid, to indicate
+                # expected stack effects, e.g. "( 1 2 f ) ( 3 4 g ) h"
+                # may be a bit clearer than "1 2 f 3 4 g h"
+                pass
+            elif token == '}':
+                if expected != '}':
+                    raise Exception("Unexpected '}'")
+                else:
+                    return
+            elif token in BLOCK_TOKENS:
+                expect('{')
+                body = _parse(tokens, '}')
+                yield (token, body)
+            elif token == '{':
+                body = _parse(tokens, '}')
+                yield ('block', body)
+            elif token in ('while', 'continue', 'break'):
+                yield (token, None)
+            elif token[0] == "'":
+                c = _escaped(token[2]) if token[1] == '\\' else token[1]
+                yield ('int', ord(c))
+            elif token[0] == '"':
+                s = _parse_string(token)
+                yield ('string', s)
+            elif token.isdigit() or token[0] == '-' and token[1:].isdigit():
+                i = int(token)
+                yield ('int', i)
+            elif token[0] == '=' and NAME_RE.fullmatch(token[1:]):
+                yield ('store', token[1:])
+            elif NAME_RE.fullmatch(token):
+                if token in PUBLIC_BUILTINS:
+                    yield ('builtin', token)
+                else:
+                    yield ('load', token)
             else:
-                print(indent + f'{t}: {v!r}')
-    for k, v in defs.items():
-        print(f"=== def {' '.join([k] + v.params)}:")
-        _pp_nodes(v)
-    print("toplevel:")
-    _pp_nodes(nodes)
+                raise Exception("Unrecognized token")
+        except Exception as ex:
+            if expected is None:
+                raise Exception(f"At line {line_i + 1}, token {token!r}: {ex.__class__.__name__}: {ex}")
+            else:
+                raise
+    if expected is not None:
+        raise Exception(f"Expected: {expected!r}")
 
 
-def parse(lines) -> Parsed:
+def ppt(parsed, depth=0):
+    """Print parse tree, for debugging"""
+    indent = '  ' * depth
+    for t, v in parsed:
+        if t in BLOCK_TAGS:
+            print(indent + f'{t}:')
+            ppt(v, depth + 1)
+        else:
+            print(indent + f'{t}: {v!r}')
+
+
+def parse(lines):
     r"""
 
         >>> ppt(parse('0 =i loop { i 3 < ! if { break } i logi i 1- =i }'))
-        toplevel:
-          int: 0
+        int: 0
+        store: 'i'
+        loop:
+          load: 'i'
+          int: 3
+          builtin: 'lt'
+          builtin: 'not'
+          if:
+            break: None
+          load: 'i'
+          builtin: 'logi'
+          load: 'i'
+          builtin: 'dec'
           store: 'i'
-          loop:
-            load: 'i'
-            int: 3
-            builtin: 'lt'
-            builtin: 'not'
-            if:
-              break: None
-            load: 'i'
-            builtin: 'logi'
-            load: 'i'
-            builtin: 'dec'
-            store: 'i'
-
-        >>> ppt(parse('def f x y { local z x y + =z z } def g { 10 * } ( 1 2 f ) g'))
-        def f x y:
-          load_local: 'x'
-          load_local: 'y'
-          builtin: 'add'
-          store_local: 'z'
-          load_local: 'z'
-        def g:
-          int: 10
-          builtin: 'mul'
-        toplevel:
-          int: 1
-          int: 2
-          call: 'f'
-          call: 'g'
 
     """
     if isinstance(lines, str):
@@ -247,124 +265,10 @@ def parse(lines) -> Parsed:
         for line_i, line in enumerate(lines):
             for token in tokenize(line):
                 yield line_i, token
-    tokens = get_tokens()
-
-    predefs: Set[str] = set()
-    defs: Dict[str, ParsedDef] = {}
-    params: List[str] = []
-    localvars: List[str] = []
-    in_def: str = None
-
-    def _parse(expected=None):
-        nonlocal in_def
-        def expect(expected):
-            line_i, token = next(tokens)
-            if token != expected:
-                raise Exception(f"Expected {expected!r}, got {token!r}")
-        for line_i, token in tokens:
-            try:
-                if token in OPERATORS:
-                    yield ('builtin', OPERATORS[token])
-                elif token[0] == '#':
-                    # Comment
-                    pass
-                elif token in '()':
-                    # Parentheses can be used as a visual aid, to indicate
-                    # expected stack effects, e.g. "( 1 2 f ) ( 3 4 g ) h"
-                    # may be a bit clearer than "1 2 f 3 4 g h"
-                    pass
-                elif token == '}':
-                    if expected != '}':
-                        raise Exception("Unexpected '}'")
-                    else:
-                        return
-                elif token in BLOCK_TOKENS:
-                    expect('{')
-                    body = _parse('}')
-                    yield (token, body)
-                elif token == '{':
-                    body = _parse('}')
-                    yield ('block', body)
-                elif token in ('while', 'continue', 'break', 'return'):
-                    yield (token, None)
-                elif token[0] == "'":
-                    c = _escaped(token[2]) if token[1] == '\\' else token[1]
-                    yield ('int', ord(c))
-                elif token[0] == '"':
-                    s = _parse_string(token)
-                    yield ('string', s)
-                elif token.isdigit() or token[0] == '-' and token[1:].isdigit():
-                    i = int(token)
-                    yield ('int', i)
-                elif token[0] == '=' and NAME_RE.fullmatch(token[1:]):
-                    name = token[1:]
-                    if name in params or name in localvars:
-                        yield ('store_local', name)
-                    else:
-                        yield ('store', name)
-                elif token == 'local':
-                    line_i, name = next(tokens)
-                    if not in_def:
-                        raise Exception(f"Local {name!r} outside def")
-                    if name not in localvars:
-                        localvars.append(name)
-                elif token == 'predef':
-                    line_i, name = next(tokens)
-                    if in_def:
-                        raise Exception(f"Predef {name!r} inside def {in_def!r}")
-                    predefs.add(name)
-                elif token == 'def':
-                    line_i, name = next(tokens)
-                    if in_def:
-                        raise Exception(f"Def inside def: {name!r}")
-                    if name in defs:
-                        raise Exception(f"Already defined: {name!r}")
-                    predefs.add(name)
-                    in_def = name
-                    params.clear()
-                    while True:
-                        line_i, name = next(tokens)
-                        if name == '{':
-                            break
-                        if name in params:
-                            raise Exception(f"Duplicate parameter: {name!r}")
-                        params.append(name)
-                    body = _parse('}')
-                    defs[in_def] = ParsedDef(
-                        params=params,
-                        localvars=localvars,
-                        body=body,
-                    )
-                    localvars.clear()
-                    params.clear()
-                    in_def = None
-                elif NAME_RE.fullmatch(token):
-                    if token in PUBLIC_BUILTINS:
-                        yield ('builtin', token)
-                    elif token in predefs or token in defs:
-                        yield ('call', token)
-                    elif token in params or token in localvars:
-                        yield ('load_local', token)
-                    else:
-                        yield ('load', token)
-                else:
-                    raise Exception("Unrecognized token")
-            except Exception as ex:
-                if expected is None:
-                    raise Exception(f"At line {line_i + 1}, token {token!r}: {ex.__class__.__name__}: {ex}")
-                else:
-                    raise
-        if expected is not None:
-            raise Exception(f"Expected: {expected!r}")
-
-    missing_defs = [name for name in predefs if name not in defs]
-    if missing_defs:
-        raise Exception(f"Missing definitions for: {' '.join(missing_defs)}")
-
-    return defs, _parse()
+    yield from _parse(get_tokens())
 
 
-def compile(parsed: Parsed) -> Compilation:
+def compile(parsed) -> Compilation:
     r"""
 
         >>> comp = compile(parse('''0 =i loop {
@@ -423,7 +327,6 @@ def compile(parsed: Parsed) -> Compilation:
 
     strings: Dict[str, int] = {}
     vars: Dict[str, int] = {}
-    funcs: Dict[str, int] = {}
     instructions: List[int] = []
     builtin_locations: Set[int] = set()
 
@@ -450,11 +353,11 @@ def compile(parsed: Parsed) -> Compilation:
     def push_value(value: int):
         instructions.append(value)
 
-    def _process(nodes, strong_block=True, start_of_block=None, update_with_end_of_block=None, localvars=None):
+    def _process(parsed, strong_block=True, start_of_block=None, update_with_end_of_block=None):
         if strong_block:
             start_of_block = len(instructions)
             update_with_end_of_block = []
-        for tag, data in nodes:
+        for tag, data in parsed:
             if tag == 'builtin':
                 push_builtin(data)
             elif tag == 'if':
@@ -499,12 +402,6 @@ def compile(parsed: Parsed) -> Compilation:
             elif tag == 'load':
                 push_builtin('_load')
                 push_value(getvar(data))
-            elif tag == 'store_local':
-                push_builtin('_store_local')
-                push_value(getvar(data))
-            elif tag == 'load_local':
-                push_builtin('_load_local')
-                push_value(getvar(data))
             else:
                 raise Exception("Unrecognized tag: {tag!r}")
 
@@ -515,21 +412,13 @@ def compile(parsed: Parsed) -> Compilation:
             for i in update_with_end_of_block:
                 instructions[i] = end_of_block
 
-    # Recursively process the parse trees for toplevel and defs
-    defs, nodes = parsed
-    _process(nodes)
+    # Recursively process the parse tree
+    _process(parsed)
     push_builtin('_halt')
-    for name, de in defs.items():
-        # TODO: push params and localvars
-        _process(de.body)
-        # TODO: update 'return' instructions to jump to len(instructions)
-        # TODO: pop params and localvars
-        push_builtin('_return')
 
     return Compilation(
         strings=strings,
         vars=vars,
-        funcs=funcs,
         instructions=instructions,
         builtin_locations=builtin_locations,
     )

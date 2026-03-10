@@ -54,7 +54,9 @@ See also:
 * https://en.wikipedia.org/wiki/Threaded_code
 
 The language is very simple: everything is an integer, integers can also be
-interpreted as pointers, and there is no syntax sugar for data structures.
+interpreted as pointers, all variables are global, and there is currently
+no way to define functions (so, all function calls are to built-in
+functions, implemented in assembly).
 
 However, the purpose of the language isn't to be expressive, but to be easy
 to reason about and debug, and just powerful enough to play with multitasking
@@ -175,81 +177,3 @@ client, or they can be hooked up to other tasks.
         }
     }
 
-Here is an example program with a function definition.
-Functions can be defined anywhere (except within each other).
-They must be defined before being referred to, but apart from that, the
-location of a function's definition within the code has no effect.
-There is no "main" function; rather, all code which is outside a function
-definition is the program's top-level code.
-
-    def fac n {
-        n 1 <= if { 1 return }
-        n 1- fac *
-    }
-
-    6 fac 720 == assert
-
-Here is an implementation of singly-linked lists, using the heap.
-Function names may contain dots '.' to help them look like class methods,
-although the dots have no special meaning to the language itself.
-
-    # The end-of-list marker
-    def nil { 0 }
-
-    # Create a list from a head (i.e. data element) and tail (i.e. pointer
-    # to the next list node, or nil if this is the list's final element).
-    def list.create head tail {
-        # Push a pointer to current top of heap onto the stack
-        heap
-
-        # Push head and tail onto the head
-        head hpush
-        tail hpush
-
-        # The pointer to the old top of heap is still on top of the stack,
-        # and so is returned!..
-    }
-
-    # NOTE: no memory is actually freed in this particular list implementation.
-    # But we could implement it if we wanted to, by somehow marking list nodes
-    # as being in use or freed, possibly shrinking the heap using "hdrop"
-    # and/or "hpop", etc.
-    def list.free { drop }
-
-    # Functions to get/set the head and tail of a list.
-    # For speed & brevity, the stack is being manipulated directly, instead
-    # of using local variables.
-    def list.head { $ }
-    def list.tail { 2+ $ }
-    def list.set_head { =$ }
-    def list.set_tail { swap 2+ swap =$ }
-
-    # Given a list, jump to its "n"th element.
-    def list.at list n {
-        loop {
-            n 0 > while
-            list list.tail =list
-            n 1- =n
-        }
-        list
-    }
-
-    # Get and set the "n"th element of a list.
-    # Note that not all function inputs are explicity listed; e.g. list.get
-    # expects 2 inputs on top of the stack (to be used by list.at), but since
-    # it doesn't need to store them in local variables, it doesn't bother
-    # mentioning them.
-    def list.get { list.at list.get_head }
-    def list.set x { list.at x list.set_head }
-
-    # Build the list [10, 20, 30]
-    10 20 30 nil list.create list.create list.create =x
-
-    # Get some list elements
-    x 0 list.get 10 == assert
-    x 1 list.get 20 == assert
-    x 2 list.get 30 == assert
-
-    # Modify a list element (the list now looks like: [10, 99, 30])
-    x 1 99 list.set
-    x 1 list.get 99 == assert
