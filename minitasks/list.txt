@@ -1,6 +1,10 @@
+
+# The end-of-list marker
+def nil { 0 }
+
 # Create a list from a head (i.e. data element) and tail (i.e. pointer
 # to the next list node, or nil if this is the list's final element).
-def list.create head tail {
+def list.create head tail : _ {
     # Push a pointer to current top of heap onto the stack
     heap
 
@@ -16,18 +20,18 @@ def list.create head tail {
 # But we could implement it if we wanted to, by somehow marking list nodes
 # as being in use or freed, possibly shrinking the heap using "hdrop"
 # and/or "hpop", etc.
-def list.free { drop }
+def list.free _ : { drop }
 
 # Functions to get/set the head and tail of a list.
 # For speed & brevity, the stack is being manipulated directly, instead
 # of using local variables.
-def list.head { $ }
-def list.tail { 2+ $ }
-def list.set_head { =$ }
-def list.set_tail { swap 2+ swap =$ }
+def list.head _ : _ { $ }
+def list.tail _ : _ { 2+ $ }
+def list.set_head _ _ : { =$ }
+def list.set_tail _ _ : { swap 2+ swap =$ }
 
 # Given a list, jump to its "n"th element.
-def list.at list n {
+def list.at list n : _ {
     loop {
         n 0 > while
         list list.tail =list
@@ -41,11 +45,8 @@ def list.at list n {
 # expects 2 inputs on top of the stack (to be used by list.at), but since
 # it doesn't need to store them in local variables, it doesn't bother
 # mentioning them.
-def list.get { list.at list.get_head }
-def list.set x { list.at x list.set_head }
-
-# The end-of-list marker
-0 =nil
+def list.get _ _ : _ { list.at list.get_head }
+def list.set _ _ x : { list.at x list.set_head }
 
 # Build the list [10, 20, 30]
 10 20 30 nil list.create list.create list.create =x

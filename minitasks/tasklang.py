@@ -1,5 +1,15 @@
 import re
-from typing import NamedTuple, List, Dict, Set
+from typing import NamedTuple, Tuple, List, Dict, Set, Iterable, Any
+
+
+ParsedNode = Tuple[str, Any]
+
+class ParsedDef(NamedTuple):
+    params: List[str]
+    localvars: List[str]
+    body: Iterable[ParsedNode]
+
+Parsed = Tuple[Iterable[ParsedNode], Dict[str, ParsedDef]]
 
 
 class Compilation(NamedTuple):
@@ -20,9 +30,6 @@ class Compilation(NamedTuple):
     # and must be converted to actual memory addresses when loaded into
     # the OS
     builtin_locations: Set[int]
-
-    # Index into self.instructions
-    entry_point: int
 
     @property
     def heap_size(self) -> int:
@@ -106,6 +113,7 @@ PRIVATE_BUILTINS = {
     '_jumpif',
     '_atomic',
     '_end_atomic',
+    '_halt',
 }
 
 # OS builtin functions which can be used directly
@@ -140,7 +148,7 @@ BUILTINS = (
 BUILTIN_INDEXES = {name: i for i, name in enumerate(BUILTINS)}
 
 
-def tokenize(line):
+def tokenize(line: str) -> Iterable[str]:
     r"""
 
         >>> list(tokenize(r' 0 =i "Hello\nworld" { } # The rest is a comment'))
@@ -156,7 +164,7 @@ def tokenize(line):
             yield token
 
 
-def _escaped(c):
+def _escaped(c: str) -> str:
     return {
         '\\': '\\',
         'n': '\n',
@@ -164,7 +172,7 @@ def _escaped(c):
     }[c]
 
 
-def _parse_string(token):
+def _parse_string(token: str) -> str:
     cc = []
     escaping = False
     for c in token[1:-1]:
@@ -178,39 +186,43 @@ def _parse_string(token):
     return ''.join(cc)
 
 
-def ppt(parsed, depth=0):
+def ppt(parsed: Parsed):
     """Print parse tree, for debugging"""
-    indent = '  ' * depth
-    for t, v in parsed:
-        if t in BLOCK_TAGS:
-            print(indent + f'{t}:')
-            ppt(v, depth + 1)
-        elif t == 'def':
-            name, params, localvars, body = v
-            print(indent + f'{t} {" ".join([name] + params)}:')
-            ppt(body, depth + 1)
-        else:
-            print(indent + f'{t}: {v!r}')
+    defs, nodes = parsed
+    def _pp_nodes(nodes, depth=1):
+        indent = '  ' * depth
+        for t, v in nodes:
+            if t in BLOCK_TAGS:
+                print(indent + f'{t}:')
+                _pp_nodes(v, depth + 1)
+            else:
+                print(indent + f'{t}: {v!r}')
+    for k, v in defs.items():
+        print(f"=== def {' '.join([k] + v.params)}:")
+        _pp_nodes(v)
+    print("toplevel:")
+    _pp_nodes(nodes)
 
 
-def parse(lines):
+def parse(lines) -> Parsed:
     r"""
 
         >>> ppt(parse('0 =i loop { i 3 < ! if { break } i logi i 1- =i }'))
-        int: 0
-        store: 'i'
-        loop:
-          load: 'i'
-          int: 3
-          builtin: 'lt'
-          builtin: 'not'
-          if:
-            break: None
-          load: 'i'
-          builtin: 'logi'
-          load: 'i'
-          builtin: 'dec'
+        toplevel:
+          int: 0
           store: 'i'
+          loop:
+            load: 'i'
+            int: 3
+            builtin: 'lt'
+            builtin: 'not'
+            if:
+              break: None
+            load: 'i'
+            builtin: 'logi'
+            load: 'i'
+            builtin: 'dec'
+            store: 'i'
 
         >>> ppt(parse('def f x y { local z x y + =z z } def g { 10 * } ( 1 2 f ) g'))
         def f x y:
@@ -222,10 +234,11 @@ def parse(lines):
         def g:
           int: 10
           builtin: 'mul'
-        int: 1
-        int: 2
-        call: 'f'
-        call: 'g'
+        toplevel:
+          int: 1
+          int: 2
+          call: 'f'
+          call: 'g'
 
     """
     if isinstance(lines, str):
@@ -237,7 +250,7 @@ def parse(lines):
     tokens = get_tokens()
 
     predefs: Set[str] = set()
-    defs: Set[str] = set()
+    defs: Dict[str, ParsedDef] = {}
     params: List[str] = []
     localvars: List[str] = []
     in_def: str = None
@@ -306,7 +319,7 @@ def parse(lines):
                         raise Exception(f"Def inside def: {name!r}")
                     if name in defs:
                         raise Exception(f"Already defined: {name!r}")
-                    defs.add(name)
+                    predefs.add(name)
                     in_def = name
                     params.clear()
                     while True:
@@ -317,7 +330,11 @@ def parse(lines):
                             raise Exception(f"Duplicate parameter: {name!r}")
                         params.append(name)
                     body = _parse('}')
-                    yield ('def', (in_def, params, localvars, body))
+                    defs[in_def] = ParsedDef(
+                        params=params,
+                        localvars=localvars,
+                        body=body,
+                    )
                     localvars.clear()
                     params.clear()
                     in_def = None
@@ -344,10 +361,10 @@ def parse(lines):
     if missing_defs:
         raise Exception(f"Missing definitions for: {' '.join(missing_defs)}")
 
-    yield from _parse()
+    return defs, _parse()
 
 
-def compile(parsed) -> Compilation:
+def compile(parsed: Parsed) -> Compilation:
     r"""
 
         >>> comp = compile(parse('''0 =i loop {
@@ -400,6 +417,7 @@ def compile(parsed) -> Compilation:
         029: 0
         030: _jump
         031: 4
+        032: _halt
 
     """
 
@@ -408,7 +426,6 @@ def compile(parsed) -> Compilation:
     funcs: Dict[str, int] = {}
     instructions: List[int] = []
     builtin_locations: Set[int] = set()
-    entry_point = 0
 
     heap_offset = 0
 
@@ -433,11 +450,11 @@ def compile(parsed) -> Compilation:
     def push_value(value: int):
         instructions.append(value)
 
-    def _process(parsed, strong_block=True, start_of_block=None, update_with_end_of_block=None, localvars=None):
+    def _process(nodes, strong_block=True, start_of_block=None, update_with_end_of_block=None, localvars=None):
         if strong_block:
             start_of_block = len(instructions)
             update_with_end_of_block = []
-        for tag, data in parsed:
+        for tag, data in nodes:
             if tag == 'builtin':
                 push_builtin(data)
             elif tag == 'if':
@@ -498,8 +515,16 @@ def compile(parsed) -> Compilation:
             for i in update_with_end_of_block:
                 instructions[i] = end_of_block
 
-    # Recursively process the parse tree
-    _process(parsed)
+    # Recursively process the parse trees for toplevel and defs
+    defs, nodes = parsed
+    _process(nodes)
+    push_builtin('_halt')
+    for name, de in defs.items():
+        # TODO: push params and localvars
+        _process(de.body)
+        # TODO: update 'return' instructions to jump to len(instructions)
+        # TODO: pop params and localvars
+        push_builtin('_return')
 
     return Compilation(
         strings=strings,
@@ -507,5 +532,4 @@ def compile(parsed) -> Compilation:
         funcs=funcs,
         instructions=instructions,
         builtin_locations=builtin_locations,
-        entry_point=entry_point,
     )
