@@ -1,0 +1,6 @@
+#
+# To be sourced!
+#
+
+export PROJECT=minitasks
+. _workon

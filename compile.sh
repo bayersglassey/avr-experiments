@@ -2,6 +2,7 @@
 set -euo pipefail
 
 avr-gcc \
+    --std=c99 \
     -mmcu=atmega328p \
     -Wall \
     -Wno-unused-function \

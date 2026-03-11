@@ -98,7 +98,6 @@ PRIVATE_BUILTINS = {
     '_while',
     '_atomic',
     '_end_atomic',
-    '_halt',
 }
 
 # OS builtin functions which can be used directly
@@ -122,6 +121,8 @@ PUBLIC_BUILTINS = {
     'logc',
     'logi',
     'logp',
+    'halt',
+    'pause',
 }
 
 # Maps builtin names to their index in the OS builtins table
@@ -321,7 +322,7 @@ def compile(parsed) -> Compilation:
         029: 0
         030: _jump
         031: 4
-        032: _halt
+        032: halt
 
     """
 
@@ -414,7 +415,7 @@ def compile(parsed) -> Compilation:
 
     # Recursively process the parse tree
     _process(parsed)
-    push_builtin('_halt')
+    push_builtin('halt')
 
     return Compilation(
         strings=strings,

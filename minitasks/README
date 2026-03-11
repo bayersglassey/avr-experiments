@@ -22,7 +22,7 @@ implementation.
 
 My Arduino Nano is technically an "Elegoo Nano V3.0", which is built from the
 Arduino Nano specs.
-The microchip is an Atmel MEGA 328P, which is part of the "AVR" family of
+The microchip is an ATmega 328P, which is part of the "AVR" family of
 chips.
 The core "minitasks" system (the multi-tasking OS) is written in C and
 assembly, using the standard AVR development toolchain: avr-gcc, avr-libc,
@@ -214,7 +214,7 @@ The task structure looks like this in memory:
 
 Where:
 * FIELDS are fields used by the OS for bookkeeping, etc
-  (in particular, every task may be in stopped/started states)
+  (e.g. task's state: stopped/started/sleeping/etc)
 * CODE is the "threaded code" compiled from tasklang, i.e. an array of
   pointers to small assembly routines implementing the basic "instructions"
   of the tasklang runtime
@@ -251,20 +251,20 @@ input/output streams.
 A protocol is used to multiplex kernel messages and task data:
 * By default, data is assumed to be going to/from tasks
 * Messages to/from the kernel are sent "atomically" (i.e. they block tasks
-  from using the raw USB streams), and begin with the escape character 0x255
+  from using the raw USB streams), and begin with the escape character 0xFF
   followed by a message type id (one byte), followed by data specific to that
   message type, which may involve bidirectional data exchange between client
   and kernel, and may be "streaming", i.e. of unknown length
 * When the escape character is to be sent to/from a task, it appears doubled
-  in the raw USB stream: 0x255 0x255
+  in the raw USB stream: 0xFF 0xFF
 * Escape character "doubling" is handled transparently by the client and OS;
-  tasks only "see" a single 0x255 character
+  tasks only "see" a single 0xFF character
 
 The description of messages above says they "may involve bidirectional data
 exchange", which means they're not really "messages" in the sense of packets
 of data being sent in one direction; they're more like little sub-protocols.
 I'm not sure what a better terminology would be; perhaps we can say that the
-message is simply the byte pair (0x255, message_type_id), and that when such
+message is simply the byte pair (0xFF, message_type_id), and that when such
 a "message" is sent & received, kernel and client immediately switch to the
 corresponding sub-protocol, and then back to the "main" protocol when the
 sub-protocol terminates.
@@ -294,13 +294,15 @@ parties must immediately exit the sub-protocol.
   * initiated by client
   * client sends a task id (1x byte)
   * kernel responds with status, 1 if task id is invalid (1x byte)
-  * kernel begins execution of the indicated task
+  * kernel begins execution of the indicated task from wherever it last
+    left off (or from beginning, if task was freshly created)
 * 0x03 STOP_TASK
   * initiated by client
   * client sends a task id (1x byte)
   * kernel responds with status, 1 if task id is invalid (1x byte)
   * kernel halts execution of the indicated task; its memory is left
-    untouched, suitable for debugging, or restarting with START_TASK
+    untouched, suitable for e.g. debugging with INSPECT_TASK or starting
+    again with START_TASK
 * 0x04 INSPECT_TASK
   * initiated by client
   * client sends a task id (1x byte)
@@ -315,13 +317,43 @@ parties must immediately exit the sub-protocol.
   * initiated by kernel
   * kernel sends a task id (1x byte)
   * kernel sends a log message from the indicated task (1x string)
-* 0x07 TASK_HALTED
+    (used by tasklang's "logc", "logs", "logi" instructions)
+* 0x07 TASK_STOPPED
   * initiated by kernel
   * kernel sends a task id (1x byte)
-  * kernel sends a reason why task was halted (1x byte)
-    * 0: task halted normally (e.g. reached the end of its code, or the
+  * kernel sends a reason why task was stopped (1x byte)
+    * 0: task stopped normally (e.g. reached the end of its code, or the
       tasklang "halt" instruction)
     * 1: failed assertion (tasklang "assert" instruction)
+  * NOTE: this message is *not* sent when a task is stopped by the
+    STOP_TASK message.
+
+Note that this protocol has no error checking, or way to recover if the
+parties get out of sync, so we are fully trusting the USB/USART infrastructure
+to deliver our data perfectly every time!..
+
+
+###############################################################################
+### RESOURCE QUEUES
+
+The OS considers the following things to be "resources" which tasks can use:
+* the USB input/output streams
+* other tasks' input/output streams (i.e. pipes)
+
+Every resource is either an input stream or an output stream, and has an
+associated queue.
+Every task can be waiting on at most 1 queue. When the resource for that
+queue becomes available, the first task in the queue is woken up.
+If the resource was an input stream, its next byte of data is pushed onto
+the woken task's stack.
+If the resource was an output stream, a byte of data is popped from the
+task's stack and sent through the output stream.
+
+The microchip has a USART, which on the Arduino is hooked up to a serial-to-USB
+chip (the FT232RL) which is hooked up to a mini-USB port.
+This is the major shared resource in the "minitasks" OS; but there are also
+"pipes", i.e. it's possible to connect tasks together and have them treat
+each other as resources.
 
 
 ###############################################################################
