@@ -6,7 +6,7 @@
 
 
 ###############################################################################
-### MINITASK
+### MINITASKS
 
 It's a miniature multi-tasking operating system for the Arduino Nano, which is
 a little computer-on-a-chip.
@@ -20,8 +20,13 @@ like toggling LEDs and sending bytes back over USB etc.
 Basically, it's a way to learn about embedded programming and realtime OS
 implementation.
 
-The core system (the multi-tasking OS) is written in C and assembly, using the
-standard AVR development toolchain: avr-gcc, avr-libc, avrdude, etc.
+My Arduino Nano is technically an "Elegoo Nano V3.0", which is built from the
+Arduino Nano specs.
+The microchip is an Atmel MEGA 328P, which is part of the "AVR" family of
+chips.
+The core "minitasks" system (the multi-tasking OS) is written in C and
+assembly, using the standard AVR development toolchain: avr-gcc, avr-libc,
+avrdude, etc.
 See also:
 * https://www.nongnu.org/avr-libc/
 * https://github.com/avrdudes/avr-libc
@@ -29,15 +34,15 @@ See also:
 
 The core of the OS (scheduler, resource queues, etc) is written in C.
 
-The commands/tasks you send to the OS use a tiny programming language, let's
-call it "tasklang", written in assembly.
+The commands/tasks you send to the OS use a tiny programming language, called
+"tasklang", written in assembly. It's described more fully below.
 
 The client (which runs on my/your laptop, and talks to the OS over USB) is
 written in Python.
 
 
 ###############################################################################
-### TASKLANG
+### THE "TASKLANG" LANGUAGE
 
 The "minitasks" system consists of a Python client sending little programs
 over USB to the OS on the Arduino, to be run as tasks.
@@ -47,16 +52,27 @@ The language is vaguely FORTH-like: it's explicitly stack-based, and uses
 "threaded code" as its execution model, that is, "code" consists of arrays of
 pointers representing subroutine calls.
 However, unlike FORTH, tasklang doesn't come with its own compiler; instead,
-programs are compiled by the Python client, and the OS only needs to know how
-to run them.
+programs are compiled by the Python client (see tasklang.py), and the OS only
+needs to know how to run them.
 See also:
 * https://en.wikipedia.org/wiki/Forth_(programming_language)
 * https://en.wikipedia.org/wiki/Threaded_code
 
+NOTE: why use threaded code?.. why not compile to machine code on the fly?..
+Because the microchip uses the "Harvard architecture", i.e. programs and data
+have separate address spaces.
+Specifically, programs live in flash memory, which can only be written to a
+page at a time by the bootloader.
+So, compiling small programs on-the-fly is not possible, or at any rate not
+straightforward (you would need to write a custom bootloader, and then either
+use an entire page of flash for every program, or do something fancy like
+copy pages out of flash into SRAM, append freshly-compiled code, then copy
+them back into flash).
+
 The language is very simple: everything is an integer, integers can also be
-interpreted as pointers, all variables are global, and there is currently
-no way to define functions (so, all function calls are to built-in
-functions, implemented in assembly).
+interpreted as pointers, all variables are global, and there is no support
+for defining new functions/subroutines, only for calling built-in ones written
+in assembly.
 
 However, the purpose of the language isn't to be expressive, but to be easy
 to reason about and debug, and just powerful enough to play with multitasking
@@ -176,4 +192,144 @@ client, or they can be hooked up to other tasks.
             " times!\n" logs
         }
     }
+
+
+###############################################################################
+### TASK MEMORY LAYOUT
+
+The OS consists of a kernel, and whatever tasks are running.
+There is a task table of fixed size:
+
+    struct task TASKS[MAX_TASKS];
+
+Each task has an id, which is just its index within the table.
+MAX_TASKS is <= 256, so a task id fits in a single byte.
+The task structure looks like this in memory:
+
+    +--------+------+------+------+-------+
+    | FIELDS | CODE | HEAP | FREE | STACK |
+    +--------+------+------+------+-------+
+
+    <-------- sizeof struct task --------->
+
+Where:
+* FIELDS are fields used by the OS for bookkeeping, etc
+  (in particular, every task may be in stopped/started states)
+* CODE is the "threaded code" compiled from tasklang, i.e. an array of
+  pointers to small assembly routines implementing the basic "instructions"
+  of the tasklang runtime
+* HEAP grows upwards
+* FREE is free space, used by HEAP and STACK when they grow
+* STACK grows downwards
+
+The heap and stack grow towards each other, and there are no stack overflow
+checks.
+In fact, while a task is running, the microchip's stack pointer is set to
+the top of that task's stack, and any assembly routines called by the task
+(or triggered by interrupts!..) use that task's stack space.
+
+
+###############################################################################
+### OS/CLIENT COMMUNICATION PROTOCOL
+
+The kernel assumes it always has a USB connection to the Python client.
+This USB connection gives us two byte streams, the "input stream" from client
+to OS, and the "output stream" from OS to client.
+The OS kernel and tasks use these streams for different purposes: the kernel
+uses them to exchange messages with the client (this is how e.g. tasks are
+created, stopped, inspected, etc), while tasks use them as plain byte streams,
+essentially the equivalent of C's stdin/stdout.
+Basically, tasks "think" they are using the USB streams directly, but in fact
+the kernel is able to exchange messages over the same connection.
+The input/output streams are a "resource" shared by all tasks: if one task
+sends the characters "abc", and another task concurrently sends "123", those
+characters are sent over the shared output stream interleaved according to
+the whims of the scheduler, e.g. "abc123", "123abc", "a12bc3", etc.
+The client cannot distinguish between tasks on the other end of the
+input/output streams.
+
+A protocol is used to multiplex kernel messages and task data:
+* By default, data is assumed to be going to/from tasks
+* Messages to/from the kernel are sent "atomically" (i.e. they block tasks
+  from using the raw USB streams), and begin with the escape character 0x255
+  followed by a message type id (one byte), followed by data specific to that
+  message type, which may involve bidirectional data exchange between client
+  and kernel, and may be "streaming", i.e. of unknown length
+* When the escape character is to be sent to/from a task, it appears doubled
+  in the raw USB stream: 0x255 0x255
+* Escape character "doubling" is handled transparently by the client and OS;
+  tasks only "see" a single 0x255 character
+
+The description of messages above says they "may involve bidirectional data
+exchange", which means they're not really "messages" in the sense of packets
+of data being sent in one direction; they're more like little sub-protocols.
+I'm not sure what a better terminology would be; perhaps we can say that the
+message is simply the byte pair (0x255, message_type_id), and that when such
+a "message" is sent & received, kernel and client immediately switch to the
+corresponding sub-protocol, and then back to the "main" protocol when the
+sub-protocol terminates.
+Errr... let's go with that.
+
+Here are the most important types of message/sub-protocol.
+NOTE: within this listing, "uint16" means 2 bytes in little-endian order.
+NOTE: within this listing, "string" means a uint16 representing the length
+of the data to be transfered, followed by the bytes of that data.
+NOTE: within this listing, "status" means a single byte indicating whether
+everything is ok. If the byte is zero, everything is ok; otherwise, both
+parties must immediately exit the sub-protocol.
+* 0x00 PING
+  * may be initiated by client or kernel
+  * initiating party sends a value (1x byte)
+  * receiving party must respond with the same value (1x byte)
+* 0x01 LOAD_TASK
+  * initiated by client
+  * client sends a task id (1x byte)
+  * kernel responds with status, 1 if task id is invalid (1x byte)
+  * client sends the intended contents of the CODE and HEAP sections of
+    the new task's memory as a string
+  * kernel loads CODE and HEAP, and sets up the task's FIELDS such that
+    it is in the stopped state (i.e. execution is paused until client
+    sends START_TASK)
+* 0x02 START_TASK
+  * initiated by client
+  * client sends a task id (1x byte)
+  * kernel responds with status, 1 if task id is invalid (1x byte)
+  * kernel begins execution of the indicated task
+* 0x03 STOP_TASK
+  * initiated by client
+  * client sends a task id (1x byte)
+  * kernel responds with status, 1 if task id is invalid (1x byte)
+  * kernel halts execution of the indicated task; its memory is left
+    untouched, suitable for debugging, or restarting with START_TASK
+* 0x04 INSPECT_TASK
+  * initiated by client
+  * client sends a task id (1x byte)
+  * kernel responds with status, 1 if task id is invalid (1x byte)
+  * kernel sends the offsets of task's CODE, HEAP, FREE, and STACK memory
+    segments within its task structre (4x uint16)
+  * kernel sends the entire contents of the task's memory as a string
+* 0x05 KERNEL_LOG
+  * initiated by kernel
+  * kernel sends a string (i.e. a log message)
+* 0x06 TASK_LOG
+  * initiated by kernel
+  * kernel sends a task id (1x byte)
+  * kernel sends a string (i.e. a log message from the indicated task)
+* 0x07 TASK_HALTED
+  * initiated by kernel
+  * kernel sends a task id (1x byte)
+  * kernel sends a reason why task was halted (1x byte)
+    * 0: task halted normally (e.g. reached the end of its code, or the
+      tasklang "halt" instruction)
+    * 1: failed assertion (tasklang "assert" instruction)
+
+
+###############################################################################
+
+TODO:
+* read about timers
+    * https://microcontrollerslab.com/timers-avr-microcontroller/
+    * https://exploreembedded.com/wiki/AVR_Timer_Interrupts
+    * https://ww1.microchip.com/downloads/en/Appnotes/Atmel-2505-Setup-and-Use-of-AVR-Timers_ApplicationNote_AVR130.pdf
+    * https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ApplicationNotes/ApplicationNotes/doc1493.pdf
 

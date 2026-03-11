@@ -34,9 +34,11 @@ void uart_init(void) {
     // Taken from: https://github.com/m3y54m/avr-playground/blob/master/01-serial-port/src/my/serial_port.c
 
     // These values are defined in setbaud.h, which makes use of BAUD
+    // "USART BAUD RATE REGISTER"
     UBRR0H = UBRRH_VALUE;
     UBRR0L = UBRRL_VALUE;
 
+    // "USART CONTROL & STATUS REGISTER"
     #if USE_2X
     UCSR0A |= (1 << U2X0);
     #else
@@ -49,12 +51,14 @@ void uart_init(void) {
 static char uart_get(void) {
     // Taken from: https://github.com/m3y54m/avr-playground/blob/master/01-serial-port/src/my/serial_port.c
     loop_until_bit_is_set(UCSR0A, RXC0);
+    // "USART DATA REGISTER"
     return UDR0;
 }
 
 static void uart_put(char c) {
     // Taken from: https://github.com/m3y54m/avr-playground/blob/master/01-serial-port/src/my/serial_port.c
     loop_until_bit_is_set(UCSR0A, UDRE0);
+    // "USART DATA REGISTER"
     UDR0 = c;
 }
 
