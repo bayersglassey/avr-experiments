@@ -88,7 +88,7 @@ static void uart_put(char c) {
 }
 
 static char to_hex(uint8_t c) {
-    return c < 10? '0' + c: c < 16? 'A' + c - 16: '?';
+    return c < 10? '0' + c: c < 16? 'A' + c - 10: '?';
 }
 
 static void uart_put_hex(uint8_t c) {
