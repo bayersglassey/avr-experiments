@@ -1,0 +1,15 @@
+# Set the variable "led_state" to 0
+0 =led_state
+
+# Start an infinite loop
+loop {
+    # Call the set_led function with one argument, the desired LED state
+    # (0 for off, 1 for on)
+    led_state set_led
+
+    # Reverse the desired LED state
+    led_state ! =led_state
+
+    # Ask the OS to put this task to sleep & wake it up in 1 second
+    sleep 1000
+}

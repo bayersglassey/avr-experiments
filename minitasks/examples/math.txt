@@ -1,0 +1,19 @@
+# Set x to 1 + 2.
+# The "1" and "2" literals push their values onto the stack.
+# The "+" operator pops 2 values off the stack, adds them together,
+# and pushes the result onto the stack.
+# For more information, read any basic FORTH tutorial!..
+# As for "=x", that's not standard FORTH syntax: it means "pop a value
+# from the stack and store it in the x variable".
+1 2 + =x
+
+# Set y to x * x.
+# The meaning of "dup" is "duplicate the value on top of the stack", so
+# "x dup" is equivalent to "x x".
+x dup * =y
+
+# Assert that x equals 3, and y equals 9.
+# If an assertion fails, the task is stopped, but hangs around in memory
+# so you can inspect it if you want.
+x 3 == assert
+y 9 == assert
