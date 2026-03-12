@@ -255,6 +255,12 @@ int main(void) {
     uart_init();
     sei(); // enable global interrupts
 
+    led_toggle();
+    _delay_ms(100);
+    led_toggle();
+    _delay_ms(100);
+    led_toggle();
+
     while (1) {
         //_delay_ms(1000);
         //led_toggle();
