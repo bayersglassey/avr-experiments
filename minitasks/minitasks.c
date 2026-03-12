@@ -10,6 +10,7 @@
 #define BAUD 38400
 
 #include <stdlib.h>
+#include <stddef.h>
 #include <avr/io.h>
 #include <util/setbaud.h>
 #include <util/delay.h>
@@ -19,13 +20,14 @@
 // Maximum number of tasks in the system
 #define MAX_TASKS 8
 
+#define TASK_SIZE (sizeof(task_t))
+
 // Technically the size of a task's heap *and* stack, which grow towards each
 // other: the heap grows upwards, the stack downwards.
 // Also, the task's code lives on its heap!..
 #define HEAP_SIZE 128
 
 typedef uint8_t task_id_t;
-#define BAD_TASK_ID ((task_id_t) -1)
 
 // The "escape character" over USART communications, indicating the start
 // of a message
@@ -39,24 +41,45 @@ enum task_state {
 };
 
 enum message_type {
-    MESSAGE_PING          = 0,
-    MESSAGE_LOAD_TASK     = 1,
-    MESSAGE_START_TASK    = 2,
-    MESSAGE_STOP_TASK     = 3,
-    MESSAGE_INSPECT_TASK  = 4,
-    MESSAGE_KERNEL_LOG    = 5,
-    MESSAGE_TASK_LOG      = 6,
-    MESSAGE_TASK_STOPPED   = 7,
+    MESSAGE_PING              = 0x00,
+    MESSAGE_GET_OFFSETS       = 0x01,
+    MESSAGE_LOAD_TASK         = 0x02,
+    MESSAGE_START_TASK        = 0x03,
+    MESSAGE_STOP_TASK         = 0x04,
+    MESSAGE_INSPECT_TASK      = 0x05,
+    MESSAGE_KERNEL_LOG        = 0x06,
+    MESSAGE_TASK_LOG          = 0x07,
+    MESSAGE_TASK_STOPPED      = 0x08,
 };
 
-struct task {
+typedef struct task {
     // TODO...
     uint8_t state; // enum task_state
     char heap[HEAP_SIZE];
-};
+} task_t;
 
-struct task TASKS[MAX_TASKS] = {0};
+task_t TASKS[MAX_TASKS] = {0};
 
+
+void __attribute__((noreturn)) die(void);
+
+
+///////////////////////////////////////////////////////////////////////////////
+// TASK FUNCTIONS
+
+void start_task(task_t *task) {
+    task->state = TASK_STATE_STARTED;
+    // TODO...
+}
+
+void stop_task(task_t *task) {
+    task->state = TASK_STATE_STOPPED;
+    // TODO...
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+// UART FUNCTIONS
 
 void uart_init(void) {
     // These values are defined in setbaud.h, which makes use of BAUD
@@ -81,17 +104,30 @@ static char uart_get(void) {
     return UDR0;
 }
 
+uint16_t uart_get_uint16(void) {
+    // NOTE: little-endian
+    int i = (uint8_t) uart_get();
+    i |= ((uint8_t) uart_get()) << 8;
+    return i;
+}
+
 static void uart_put(char c) {
     loop_until_bit_is_set(UCSR0A, UDRE0);
     // "USART DATA REGISTER"
     UDR0 = c;
 }
 
+void uart_put_uint16(uint16_t i) {
+    // NOTE: little-endian
+    uart_put(i & 0xff);
+    uart_put(i >> 8);
+}
+
 static char to_hex(uint8_t c) {
     return c < 10? '0' + c: c < 16? 'A' + c - 10: '?';
 }
 
-static void uart_put_hex(uint8_t c) {
+void uart_put_hex(uint8_t c) {
     uart_put('0');
     uart_put('x');
     char a = to_hex(c >> 4);
@@ -110,6 +146,14 @@ void uart_puts(const char *msg) {
     while ((c = *msg++)) uart_put(c);
 }
 
+static void uart_put_message(char msg_type) {
+    uart_put(MESSAGE_ESCAPE);
+    uart_put(msg_type);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+// LED FUNCTIONS
 
 void led_init(void) {
     DDRB |= (1 << PB5);
@@ -128,47 +172,63 @@ static void led_toggle(void) {
 }
 
 
+///////////////////////////////////////////////////////////////////////////////
+// OS/CLIENT MESSAGES
+
+task_id_t get_task_id(void) {
+    task_id_t task_id = uart_get();
+    if (task_id >= MAX_TASKS) die();
+    return task_id;
+}
+
 void handle_ping(void) {
     char c = uart_get();
     uart_put(c);
 }
 
-task_id_t uart_get_task_id(void) {
-    task_id_t task_id = uart_get();
-    if (task_id >= MAX_TASKS) {
-        uart_put(1); // error status
-        return BAD_TASK_ID;
-    }
-    return task_id;
+void handle_get_offsets(void) {
+    uart_put_uint16((uint16_t) TASKS);
+    uart_put_uint16(MAX_TASKS);
+    uart_put_uint16(TASK_SIZE);
+    uart_put_uint16(offsetof(task_t, heap));
 }
 
 void handle_load_task(void) {
-    task_id_t task_id = uart_get_task_id();
-    if (task_id == BAD_TASK_ID) return;
-    // TODO...
+    task_id_t task_id = get_task_id();
+    task_t *task = &TASKS[task_id];
+    stop_task(task);
+    uint16_t data_size = uart_get_uint16();
+    char *task_data = (char*) task->heap;
+    char *task_data_end = task_data + data_size;
+    while (task_data < task_data_end) *task_data++ = uart_get();
+    task_data_end += HEAP_SIZE - data_size;
+    while (task_data < task_data_end) *task_data++ = '\0';
 }
 
 void handle_start_task(void) {
-    task_id_t task_id = uart_get_task_id();
-    if (task_id == BAD_TASK_ID) return;
-    // TODO...
+    task_id_t task_id = get_task_id();
+    task_t *task = &TASKS[task_id];
+    start_task(task);
 }
 
 void handle_stop_task(void) {
-    task_id_t task_id = uart_get_task_id();
-    if (task_id == BAD_TASK_ID) return;
-    // TODO...
+    task_id_t task_id = get_task_id();
+    task_t *task = &TASKS[task_id];
+    stop_task(task);
 }
 
 void handle_inspect_task(void) {
-    task_id_t task_id = uart_get_task_id();
-    if (task_id == BAD_TASK_ID) return;
-    // TODO...
+    task_id_t task_id = get_task_id();
+    task_t *task = &TASKS[task_id];
+    char *task_data = (char*) task;
+    char *task_data_end = task_data + TASK_SIZE;
+    while (task_data < task_data_end) uart_put(*task_data++);
 }
 
 void handle_message(char msg_type) {
     switch (msg_type) {
         case MESSAGE_PING: handle_ping(); break;
+        case MESSAGE_GET_OFFSETS: handle_get_offsets(); break;
         case MESSAGE_LOAD_TASK: handle_load_task(); break;
         case MESSAGE_START_TASK: handle_start_task(); break;
         case MESSAGE_STOP_TASK: handle_stop_task(); break;
@@ -177,24 +237,19 @@ void handle_message(char msg_type) {
             uart_puts("Can't handle: ");
             uart_put_hex(msg_type);
             uart_put_newline();
-            abort();
+            die();
     }
-}
-
-static void uart_put_message(char msg_type) {
-    uart_put(MESSAGE_ESCAPE);
-    uart_put(msg_type);
 }
 
 void send_ping(char c) {
     uart_put_message(MESSAGE_PING);
     uart_put(c);
-    char c2 = uart_get();
-    if (c2 != c) {
+    char pong = uart_get();
+    if (pong != c) {
         uart_puts("Bad pong: ");
-        uart_put_hex(c2);
+        uart_put_hex(pong);
         uart_put_newline();
-        abort();
+        die();
     }
 }
 
@@ -217,7 +272,7 @@ void send_task_stopped(task_id_t task_id, char reason) {
 
 
 ///////////////////////////////////////////////////////////////////////////////
-// Interrupts
+// INTERRUPTS
 
 ISR (USART_RX_vect) {
     // USART received data
@@ -248,18 +303,31 @@ ISR (USART0_UDRE_vect) {
 
 
 ///////////////////////////////////////////////////////////////////////////////
-// Main
+// MAIN
+
+void die(void) {
+    cli(); // disable global interrupts, we're dead now
+    led_off();
+    while (1) {
+        for (uint8_t i = 6; i--;) {
+            led_toggle();
+            _delay_ms(100);
+        }
+        _delay_ms(500);
+    }
+}
 
 int main(void) {
     led_init();
     uart_init();
     sei(); // enable global interrupts
 
-    led_toggle();
-    _delay_ms(100);
-    led_toggle();
-    _delay_ms(100);
-    led_toggle();
+    // Indicate that we've started, by flashing the LED a few times!
+    for (uint8_t i = 3; --i;) {
+        led_toggle();
+        _delay_ms(100);
+    }
+    led_off();
 
     while (1) {
         //_delay_ms(1000);

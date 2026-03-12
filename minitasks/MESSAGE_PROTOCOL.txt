@@ -1,0 +1,61 @@
+
+This document describes the "sub-protocols" for each message type in the
+protocol used between client and OS.
+See README for a high-level description of the protocol.
+This document will probably get out of date at some point, but it was very
+useful when originally designing the system...
+
+NOTE: within this listing, "uint16" means 2 bytes in little-endian order.
+NOTE: within this listing, "string" means a uint16 representing the length
+of the data to be transfered, followed by the bytes of that data.
+NOTE: within this listing, "status" means a single byte indicating whether
+everything is ok. If the byte is zero, everything is ok; otherwise, both
+parties must immediately exit the sub-protocol.
+* PING
+  * may be initiated by client or kernel
+  * initiating party sends a value (1x byte)
+  * receiving party must respond with the same value (1x byte)
+* LOAD_TASK
+  * initiated by client
+  * client sends a task id (1x byte)
+  * kernel responds with status, 1 if task id is invalid (1x byte)
+  * client sends the intended contents of the CODE and HEAP sections of
+    the new task's memory (1x string)
+  * kernel loads CODE and HEAP, and sets up the task's FIELDS such that
+    it is in the stopped state (i.e. execution is paused until client
+    sends START_TASK)
+* START_TASK
+  * initiated by client
+  * client sends a task id (1x byte)
+  * kernel responds with status, 1 if task id is invalid (1x byte)
+  * kernel begins execution of the indicated task from wherever it last
+    left off (or from beginning, if task was freshly created)
+* STOP_TASK
+  * initiated by client
+  * client sends a task id (1x byte)
+  * kernel responds with status, 1 if task id is invalid (1x byte)
+  * kernel halts execution of the indicated task; its memory is left
+    untouched, suitable for e.g. debugging with INSPECT_TASK or starting
+    again with START_TASK
+* INSPECT_TASK
+  * initiated by client
+  * client sends a task id (1x byte)
+  * kernel responds with status, 1 if task id is invalid (1x byte)
+  * kernel sends the entire contents of the task's memory (1x string)
+* KERNEL_LOG
+  * initiated by kernel
+  * kernel sends a log message (1x string)
+* TASK_LOG
+  * initiated by kernel
+  * kernel sends a task id (1x byte)
+  * kernel sends a log message from the indicated task (1x string)
+    (used by tasklang's "logc", "logs", "logi" instructions)
+* TASK_STOPPED
+  * initiated by kernel
+  * kernel sends a task id (1x byte)
+  * kernel sends a reason why task was stopped (1x byte)
+    * 0: task stopped normally (e.g. reached the end of its code, or the
+      tasklang "halt" instruction)
+    * 1: failed assertion (tasklang "assert" instruction)
+  * NOTE: this message is *not* sent when a task is stopped by the
+    STOP_TASK message.

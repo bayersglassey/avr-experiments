@@ -270,58 +270,36 @@ corresponding sub-protocol, and then back to the "main" protocol when the
 sub-protocol terminates.
 Errr... let's go with that.
 
-Here are the most important types of message/sub-protocol.
-NOTE: within this listing, "uint16" means 2 bytes in little-endian order.
-NOTE: within this listing, "string" means a uint16 representing the length
-of the data to be transfered, followed by the bytes of that data.
-NOTE: within this listing, "status" means a single byte indicating whether
-everything is ok. If the byte is zero, everything is ok; otherwise, both
-parties must immediately exit the sub-protocol.
-* 0x00 PING
-  * may be initiated by client or kernel
-  * initiating party sends a value (1x byte)
-  * receiving party must respond with the same value (1x byte)
-* 0x01 LOAD_TASK
-  * initiated by client
-  * client sends a task id (1x byte)
-  * kernel responds with status, 1 if task id is invalid (1x byte)
-  * client sends the intended contents of the CODE and HEAP sections of
-    the new task's memory (1x string)
+Here are the most important types of message sent by the client:
+* LOAD_TASK
+  * client sends a task id
+  * client sends the intended contents of the task's CODE and HEAP
   * kernel loads CODE and HEAP, and sets up the task's FIELDS such that
     it is in the stopped state (i.e. execution is paused until client
     sends START_TASK)
-* 0x02 START_TASK
-  * initiated by client
-  * client sends a task id (1x byte)
-  * kernel responds with status, 1 if task id is invalid (1x byte)
+* START_TASK
+  * client sends a task id
   * kernel begins execution of the indicated task from wherever it last
     left off (or from beginning, if task was freshly created)
-* 0x03 STOP_TASK
-  * initiated by client
-  * client sends a task id (1x byte)
-  * kernel responds with status, 1 if task id is invalid (1x byte)
+* STOP_TASK
+  * client sends a task id
   * kernel halts execution of the indicated task; its memory is left
     untouched, suitable for e.g. debugging with INSPECT_TASK or starting
     again with START_TASK
-* 0x04 INSPECT_TASK
-  * initiated by client
-  * client sends a task id (1x byte)
-  * kernel responds with status, 1 if task id is invalid (1x byte)
-  * kernel sends the offsets of task's CODE, HEAP, FREE, and STACK memory
-    segments within its task structre (4x uint16)
-  * kernel sends the entire contents of the task's memory (1x string)
-* 0x05 KERNEL_LOG
-  * initiated by kernel
-  * kernel sends a log message (1x string)
-* 0x06 TASK_LOG
-  * initiated by kernel
-  * kernel sends a task id (1x byte)
-  * kernel sends a log message from the indicated task (1x string)
-    (used by tasklang's "logc", "logs", "logi" instructions)
-* 0x07 TASK_STOPPED
-  * initiated by kernel
-  * kernel sends a task id (1x byte)
-  * kernel sends a reason why task was stopped (1x byte)
+* INSPECT_TASK
+  * client sends a task id
+  * kernel sends the entire contents of the task's memory (i.e. its task_t
+    structure)
+
+Here are the most important types of message sent by the kernel:
+* KERNEL_LOG
+  * kernel sends a log message
+* TASK_LOG
+  * kernel sends a task id
+  * kernel sends a log message
+* TASK_STOPPED
+  * kernel sends a task id
+  * kernel sends a reason why task was stopped
     * 0: task stopped normally (e.g. reached the end of its code, or the
       tasklang "halt" instruction)
     * 1: failed assertion (tasklang "assert" instruction)
