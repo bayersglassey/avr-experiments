@@ -33,12 +33,15 @@ See also:
 * https://github.com/avrdudes/avrdude
 
 The core of the OS (scheduler, resource queues, etc) is written in C.
+See: minitasks.h, minitasks.c.
 
 The commands/tasks you send to the OS use a tiny programming language, called
 "tasklang", written in assembly. It's described more fully below.
+See: tasklang.py (for the compiler), tasklang.S (for the runtime)
 
 The client (which runs on my/your laptop, and talks to the OS over USB) is
 written in Python.
+See: minitasks.py
 
 
 ###############################################################################
@@ -168,11 +171,11 @@ client, or they can be hooked up to other tasks.
             c putc
 
             # Increment ptr
-            ptr 1+ =ptr
+            ptr 1 + =ptr
         }
 
         # Increment our echo counter
-        n_echoes 1+ =n_echoes
+        n_echoes 1 + =n_echoes
 
         # Logging is sent directly through the USB to the Python client,
         # using low-level assembly routines.
@@ -312,6 +315,122 @@ to deliver our data perfectly every time!..
 
 
 ###############################################################################
+### TASKLANG RUNTIME
+
+The "tasklang" runtime is written in assembly.
+It uses threaded code, i.e. code consists of arrays of pointers to subroutines.
+The target architecture is the ATmega 328p, which is in the AVR family of
+microchips, which share a common instruction set:
+https://ww1.microchip.com/downloads/en/DeviceDoc/AVR-Instruction-Set-Manual-DS40002198A.pdf
+
+In particular, the 328p uses 8-bit data words and 16-bit code addresses.
+It's a RISC architecture: we have 32 8-bit registers (r0 through r31), with
+many instructions performing an 8-bit operation in a single cycle.
+The 8-bit registers naturally pair up into 16-bit pairs, e.g. r0:r1.
+In particular, memory (SRAM) can only be accessed via specific register pairs:
+X (r26:r27), Y (r28:r29), and Z (r30:r31).
+Memory reads/writes are possible via X, Y and Z, but indirect jumps are only
+possible via Z.
+Therefore, the tasklang runtime uses Z as a pointer to the current instruction
+within the threaded code.
+
+The AVR architecture has a stack pointer, and dedicated stack intructions:
+PUSH, POP, CALL, RET, and their variants.
+The tasklang runtime uses this stack as well.
+If tasklang were a proper FORTH, it would have a data stack and a call stack,
+and so besides the architecture's built-in stack pointer, we would need to
+choose between X and Y to implement the second stack.
+However, we have avoided having to make this choice, by not bothering to
+implement functions in tasklang!.. so it only has a data stack, which is
+implemented using the architecture's stack, which is also used by subroutines
+written in C and assembly.
+
+(The reason FORTH requires two stacks is that one is used for function arguments
+and return values, and the other is used for function return locations and
+local variables.
+Subroutines written in C and assembly get away with using 1 stack because they
+can pass arguments and return values in registers.)
+
+So, we've seen that:
+* tasklang uses the Z register pair (r30:r31) to point to current instruction
+  within threaded code (i.e. task's CODE memory section)
+* tasklang uses the built-in stack as a data stack, and for calling C/asm
+  routines (so, when a task is running, the stack pointer divides the task's
+  FREE and STACK memory sections)
+
+Now, what does the execution loop look like?..
+Each tasklang instruction is implemented as an assembly routine.
+E.g. the tasklang "+" instruction compiles to a pointer to the "add" routine.
+The "add" routine is implemented something like this:
+
+    add:
+
+        ; pop a 16-bit value into the register pair r24:r25
+        pop r25
+        pop r24
+
+        ; pop a 16-bit value into the register pair r22:r23
+        pop r23
+        pop r22
+
+        ; add the two values together
+        add r24, r22 ; add the lower bytes
+        adc r25, r23 ; add the higher bytes with carry
+
+        ; push the resulting 16-bit value
+        push r24
+        push r25
+
+        ; jump to the "next" routine
+        adiw r30, 2 ; increment Z by 2 bytes, the width of a pointer
+        ijmp ; jump to the routine at which Z is now pointing
+
+Some tasklang instructions take an argument, i.e. the threaded code contains
+a code pointer followed by an argument.
+For instance, integer literals use a subroutine like this:
+
+    _literal:
+
+        adiw r30, 2 ; increment Z by 2
+
+        ; load the integer argument from threaded code into a register pair
+        ld r24, Z
+        ldd r25, Z+1
+
+        ; push the integer argument onto the stack
+        push r24
+        push r25
+
+        ; jump to the "next" routine (as did "add")
+        adiw r30, 2
+        ijmp
+
+In some cases, e.g. the tasklang _jump instruction used for looping etc, the
+argument may be a pointer to another threaded code instruction:
+
+    _jump:
+
+        adiw r30, 2 ; increment Z by 2
+
+        ; load the argument (which is a pointer to another instruction within
+        ; the threaded code)
+        ld r24, Z
+        ldd r25, Z+1
+
+        ; copy the argument from register pair r24:r25 to r30:r31, i.e. Z
+        movw r30, r24
+
+        ; jump to the indicated instruction within the threaded code
+        ijmp
+
+
+###############################################################################
+### THE SCHEDULER & CONTEXT SWITCHING
+
+TODO...
+
+
+###############################################################################
 ### RESOURCE QUEUES
 
 The OS considers the following things to be "resources" which tasks can use:
@@ -333,13 +452,4 @@ This is the major shared resource in the "minitasks" OS; but there are also
 "pipes", i.e. it's possible to connect tasks together and have them treat
 each other as resources.
 
-
-###############################################################################
-
-TODO:
-* read about timers
-    * https://microcontrollerslab.com/timers-avr-microcontroller/
-    * https://exploreembedded.com/wiki/AVR_Timer_Interrupts
-    * https://ww1.microchip.com/downloads/en/Appnotes/Atmel-2505-Setup-and-Use-of-AVR-Timers_ApplicationNote_AVR130.pdf
-    * https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ApplicationNotes/ApplicationNotes/doc1493.pdf
-
+TODO...

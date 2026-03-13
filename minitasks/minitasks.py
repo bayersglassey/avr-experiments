@@ -24,7 +24,8 @@ def decode_uint16(data: bytes) -> int:
 
 
 class Offsets(NamedTuple):
-    task_table_offset: int
+    builtins_table_offset: int
+    tasks_table_offset: int
     max_tasks: int
     task_size: int
     heap_offset: int
@@ -71,12 +72,13 @@ class Client:
 
     def get_offsets(self) -> Offsets:
         self.write(b'\xff\x01')
-        data = self.read(8)
+        data = self.read(10)
         return Offsets(
             decode_uint16(data[0:2]),
             decode_uint16(data[2:4]),
             decode_uint16(data[4:6]),
             decode_uint16(data[6:8]),
+            decode_uint16(data[8:10]),
         )
 
     offsets = cached_property(get_offsets)

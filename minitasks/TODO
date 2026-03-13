@@ -1,94 +1,36 @@
 
+* ability to pass compiled tasklang programs to LOAD_TASK
+    * HEAP is easy, but CODE requires converting some instruction arguments
+      to CODE pointers, HEAP pointers, and builtin routine pointers
+    * Builtin routine pointers require a table, like avr-gcc's __vectors.
+      In avr/sfr_defs.h, there is:
 
-Figure out what's wrong (tty/serial driver buffering?..) with the following:
+        #define _VECTOR(N) __vector_ ## N
 
-    In [17]: from serial import Serial
+      Also look at /usr/lib/avr/lib/ldscripts/.
+      There is stuff like:
 
-    In [18]: s = Serial('/dev/ttyUSB0', 38400, timeout=.2)
+          .text   :
+          {
+            *(.vectors)
+            KEEP(*(.vectors))
 
-    In [19]: s.write(b'Hello')
-    Out[19]: 5
+      ...but where is the __vectors symbol I see in objdump output defined?..
+      Ah ha, look here:
 
-    In [20]: s.read(100)
-    Out[20]: b'Got: 0x48\r\n'
+        ~/repos/avr-libc$ ack __vectors
+        crt1/gcrt1.S
+        187:	.if (. - __vectors < _VECTORS_SIZE)
+        195:	.global	__vectors
+        196:	.func	__vectors
+        197:__vectors:
+        359:	.set	__vector_default, __vectors
+        422:	ldi	r16, hh8(pm(__vectors))
 
-...that is, why did we only get back the program's response for the first
-character we sent it (b'H')?..
-Is the issue that:
-* we send 'H', USART gets it & stores it in its Rx register
-* we send 'ello', but...
-* ...the program uses USART to send 'Got: 0x48\r\n', and using USART to
-  send stuff clobbers the Rx register?..
 
-In other words, I was hoping that USART had separate read & write "queues"
-of length 1 (i.e. Rx & Tx registers).
-But perhaps it can only remember a single byte of data, either to be
-transmitted or received.
-Can we test this theory?..
+* ability to run programs
+    * implement threaded code, the builtins
+    * do multitasking from the very start: a timer interrupt which does
+      context switching
 
-    // Does 'x' get put?.. I think so. I'm pretty sure I tested this already.
-    char c = uart_get();
-    uart_put('x');
-
-OOOOH I CAN REPLICATE THE ISSUE IN PICOCOM!
-
-    Type [C-a] [C-h] to see available commands
-    Terminal ready
-    HGot: 0x48
-    eGot: 0x65
-    lGot: 0x6C
-    lGot: 0x6C
-    oGot: 0x6F
-    HGot: 0x48
-    eGot: 0x65
-    lGot: 0x6C
-    lGot: 0x6C
-    oGot: 0x6F
-
-    *** hex: 48656c6c6f
-    Hello*** wrote 5 bytes ***
-    Got: 0x48
-
-So it looks like it's a timing issue.
-If I type 'Hello', the program has enough time to output 'Got: 0xYY' between
-each input letter.
-Whereas if I use [C-a][C-w] to enter 'hello' in hex, and send it all at once,
-then the program only responds to the first letter.
-
-What if I send a bunch of 'Hello's?.. like 32 of them?..
-
-    *** hex: 48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f48656c6c6f
-    HelloHelloHelloHelloHelloHelloHelloHelloHelloHelloHelloHelloHelloHelloHelloHello*** wrote 80 bytes ***
-    Got: 0x48
-    Got: 0x6F
-    Got: 0x48
-    Got: 0x65
-    Got: 0x6C
-    Got: 0x6C
-    Got: 0x6F
-    Got: 0x48
-
-That's 32 'Hello's (= 160 characters), and 8 responses.
-160 / 8 = 20, so there are 20 characters between responses.
-
-Also, strangely enough, depending on how many 'Hello's I send, the second response
-sees a different character:
-
-    *** hex: 48656c6c6f48656c6c6f48656c6c6f
-    HelloHelloHello*** wrote 15 bytes ***
-    Got: 0x48
-    Got: 0x6F    <==== Always 0x6F if I send 3 'Hello's
-    Got: 0x6F
-
-    *** hex: 48656c6c6f48656c6c6f48656c6c6f48656c6c6f
-    HelloHelloHelloHello*** wrote 20 bytes ***
-    Got: 0x48
-    Got: 0x6F
-    Got: 0x6C    <==== Always 0x6C if I send 4 'Hello's
-    Got: 0x6F
-
-So... what does this mean?..
-I think it means that if I want to have concurrent transmit & receive, I
-need to use interrupts?..
-But I want to understand the underlying mechanism here... why exactly is
-my data getting lost?..
+* resource queues

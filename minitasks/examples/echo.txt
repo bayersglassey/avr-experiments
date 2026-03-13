@@ -40,11 +40,11 @@ loop {
         c putc
 
         # Increment ptr
-        ptr 1+ =ptr
+        ptr 1 + =ptr
     }
 
     # Increment our echo counter
-    n_echoes 1+ =n_echoes
+    n_echoes 1 + =n_echoes
 
     # Logging is sent directly through the USB to the Python client,
     # using low-level assembly routines.

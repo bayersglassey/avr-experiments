@@ -1,6 +1,13 @@
-*.swp
+# Python
 *.pyc
+venv/
+
+# C/ASM
+*.o
 *.elf
 *.hex
-venv/
+
+# Other stuff
 defines.txt
+*.swp
+a.out

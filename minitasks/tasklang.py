@@ -13,9 +13,15 @@ class Compilation(NamedTuple):
 
     instructions: List[int]
 
-    # Marks indexes of self.instructions which are indexes into BUILTINS,
-    # and must be converted to actual memory addresses when loaded into
-    # the OS
+    # Marks indexes of self.instructions which are indexes into task's
+    # CODE section
+    code_locations: Set[int]
+
+    # Marks indexes of self.instructions which are indexes into task's
+    # HEAP section
+    heap_locations: Set[int]
+
+    # Marks indexes of self.instructions which are indexes into BUILTINS
     builtin_locations: Set[int]
 
     @property
@@ -65,10 +71,6 @@ OPERATORS = {
     '*': 'mul',
     '/': 'div',
     '%': 'mod',
-    '1+': 'inc',
-    '1-': 'dec',
-    '2+': 'inc2',
-    '2-': 'dec2',
     '<<': 'lshift',
     '>>': 'rshift',
     '==': 'eq',
@@ -90,46 +92,53 @@ OPERATORS = {
 
 # OS builtin functions which can't be used directly
 PRIVATE_BUILTINS = {
-    '_literal',
-    '_store',
-    '_load',
-    '_jump',
-    '_jumpif',
-    '_while',
-    '_atomic',
-    '_end_atomic',
+    '_literal': None,
+    '_store': None,
+    '_load': None,
+    '_jump': None,
+    '_jumpif': None,
+    '_jumpifnot': None,
+    '_atomic': None,
+    '_end_atomic': None,
 }
 
 # OS builtin functions which can be used directly
 PUBLIC_BUILTINS = {
-    'dup',
-    'swap',
-    'drop',
-    'heap',
-    'hpush',
-    'hpop',
-    'hdrop',
-    'hpushc',
-    'hpopc',
-    'hdropc',
-    'assert',
-    'set_led',
-    'sleep',
-    'getc',
-    'putc',
-    'logs',
-    'logc',
-    'logi',
-    'logp',
-    'halt',
-    'pause',
+    'dup': None,
+    'swap': None,
+    'drop': None,
+    'heap': None,
+    'hpush': None,
+    'hpop': None,
+    'hdrop': None,
+    'hpushc': None,
+    'hpopc': None,
+    'hdropc': None,
+    'assert': None,
+    'error': None,
+    'set_led': None,
+    'sleep': None,
+    'getc': None,
+    'putc': None,
+    'logs': None,
+    'logc': None,
+    'logi': None,
+    'logp': None,
+    'halt': None,
+
+    # like 'halt', but increments instruction pointer, so task can be started
+    # from there, i.e. 'pause' is a debugging breakpoint
+    'pause': None,
 }
 
 # Maps builtin names to their index in the OS builtins table
+# NOTE: this list of builtins must be in the same order as that of _BUILTINS
+# in minitasks.h!.. the names don't need to match up exactly, but the order
+# must be the same.
 BUILTINS = (
-    sorted(OPERATORS.values())
-    + sorted(PRIVATE_BUILTINS)
-    + sorted(PUBLIC_BUILTINS))
+    list(OPERATORS.values())
+    + list(PRIVATE_BUILTINS)
+    + list(PUBLIC_BUILTINS))
 BUILTIN_INDEXES = {name: i for i, name in enumerate(BUILTINS)}
 
 
@@ -243,7 +252,7 @@ def ppt(parsed, depth=0):
 def parse(lines):
     r"""
 
-        >>> ppt(parse('0 =i loop { i 3 < ! if { break } i logi i 1- =i }'))
+        >>> ppt(parse('0 =i loop { i 3 < ! if { break } i logi i 1 - =i }'))
         int: 0
         store: 'i'
         loop:
@@ -256,7 +265,8 @@ def parse(lines):
           load: 'i'
           builtin: 'logi'
           load: 'i'
-          builtin: 'dec'
+          int: 1
+          builtin: 'sub'
           store: 'i'
 
     """
@@ -275,7 +285,7 @@ def compile(parsed) -> Compilation:
         >>> comp = compile(parse('''0 =i loop {
         ...     i 3 < ! if { break }
         ...     atomic { "hello " logs i logi " world" logi }
-        ...     i 1- =i
+        ...     i 1 - =i
         ... }'''))
 
         >>> comp.strings
@@ -303,7 +313,7 @@ def compile(parsed) -> Compilation:
         010: _jumpif
         011: 14
         012: _jump
-        013: 30
+        013: 32
         014: _atomic
         015: _literal
         016: 2
@@ -317,18 +327,22 @@ def compile(parsed) -> Compilation:
         024: _end_atomic
         025: _load
         026: 0
-        027: dec
-        028: _store
-        029: 0
-        030: _jump
-        031: 4
-        032: halt
+        027: _literal
+        028: 1
+        029: sub
+        030: _store
+        031: 0
+        032: _jump
+        033: 4
+        034: halt
 
     """
 
     strings: Dict[str, int] = {}
     vars: Dict[str, int] = {}
     instructions: List[int] = []
+    code_locations: Set[int] = set()
+    heap_locations: Set[int] = set()
     builtin_locations: Set[int] = set()
 
     heap_offset = 0
@@ -347,6 +361,14 @@ def compile(parsed) -> Compilation:
             heap_offset += len(value) + 1 # plus one for NUL terminator
         return strings[value]
 
+    def push_code_location(value: int):
+        code_locations.add(len(instructions))
+        instructions.append(value)
+
+    def push_heap_location(value: int):
+        heap_locations.add(len(instructions))
+        instructions.append(value)
+
     def push_builtin(builtin: str):
         builtin_locations.add(len(instructions))
         instructions.append(BUILTIN_INDEXES[builtin])
@@ -364,14 +386,14 @@ def compile(parsed) -> Compilation:
             elif tag == 'if':
                 push_builtin('_jumpif')
                 i = len(instructions)
-                push_value(None) # jump location, updated below
+                push_code_location(None) # jump location, updated below
                 _process(data, False, start_of_block, update_with_end_of_block)
                 instructions[i] = len(instructions) # update jump location
             elif tag == 'loop':
                 i = len(instructions)
                 _process(data)
                 push_builtin('_jump')
-                push_value(i)
+                push_code_location(i)
             elif tag == 'atomic':
                 push_builtin('_atomic')
                 _process(data, False, start_of_block, update_with_end_of_block)
@@ -379,30 +401,30 @@ def compile(parsed) -> Compilation:
             elif tag == 'block':
                 _process(data)
             elif tag == 'while':
-                push_builtin('_while')
+                push_builtin('_jumpifnot')
                 update_with_end_of_block.append(len(instructions))
                 # jump location, updated below (via update_with_end_of_block)
-                push_value(None)
+                push_code_location(None)
             elif tag == 'continue':
                 push_builtin('_jump')
-                push_value(start_of_block)
+                push_code_location(start_of_block)
             elif tag == 'break':
                 push_builtin('_jump')
                 update_with_end_of_block.append(len(instructions))
                 # jump location, updated below (via update_with_end_of_block)
-                push_value(None)
+                push_code_location(None)
             elif tag == 'int':
                 push_builtin('_literal')
                 push_value(data)
             elif tag == 'string':
                 push_builtin('_literal')
-                push_value(get_string(data))
+                push_heap_location(get_string(data))
             elif tag == 'store':
                 push_builtin('_store')
-                push_value(getvar(data))
+                push_heap_location(getvar(data))
             elif tag == 'load':
                 push_builtin('_load')
-                push_value(getvar(data))
+                push_heap_location(getvar(data))
             else:
                 raise Exception("Unrecognized tag: {tag!r}")
 
@@ -421,5 +443,7 @@ def compile(parsed) -> Compilation:
         strings=strings,
         vars=vars,
         instructions=instructions,
+        code_locations=code_locations,
+        heap_locations=heap_locations,
         builtin_locations=builtin_locations,
     )
