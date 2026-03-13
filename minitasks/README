@@ -330,9 +330,9 @@ https://ww1.microchip.com/downloads/en/DeviceDoc/AVR-Instruction-Set-Manual-DS40
 In particular, the 328p uses 8-bit data words and 16-bit code addresses.
 It's a RISC architecture: we have 32 8-bit registers (r0 through r31), with
 many instructions performing an 8-bit operation in a single cycle.
-The 8-bit registers naturally pair up into 16-bit pairs, e.g. r0:r1.
+The 8-bit registers naturally pair up into 16-bit pairs, e.g. r1:r0.
 In particular, memory (SRAM) can only be accessed via specific register pairs:
-X (r26:r27), Y (r28:r29), and Z (r30:r31).
+X (r27:r26), Y (r29:r28), and Z (r31:r30).
 Memory reads/writes are possible via X, Y and Z, but indirect jumps are only
 possible via Z.
 Therefore, the tasklang runtime uses Z as a pointer to the current instruction
@@ -356,7 +356,7 @@ Subroutines written in C and assembly get away with using 1 stack because they
 can pass arguments and return values in registers.)
 
 So, we've seen that:
-* tasklang uses the Z register pair (r30:r31) to point to current instruction
+* tasklang uses the Z register pair (r31:r30) to point to current instruction
   within threaded code (i.e. task's CODE memory section)
 * tasklang uses the built-in stack as a data stack, and for calling C/asm
   routines (so, when a task is running, the stack pointer divides the task's
@@ -369,11 +369,11 @@ The "add" routine is implemented something like this:
 
     add:
 
-        ; pop a 16-bit value into the register pair r24:r25
+        ; pop a 16-bit value into the register pair r25:r24
         pop r25
         pop r24
 
-        ; pop a 16-bit value into the register pair r22:r23
+        ; pop a 16-bit value into the register pair r23:r22
         pop r23
         pop r22
 
@@ -421,7 +421,7 @@ argument may be a pointer to another threaded code instruction:
         ld r24, Z
         ldd r25, Z+1
 
-        ; copy the argument from register pair r24:r25 to r30:r31, i.e. Z
+        ; copy the argument from register pair r25:r24 to r31:r30, i.e. Z
         movw r30, r24
 
         ; jump to the indicated instruction within the threaded code

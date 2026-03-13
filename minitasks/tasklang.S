@@ -11,11 +11,11 @@ builtin_\name:
 ;; OPERATORS
 
 builtin add
-    ; pop a 16-bit value into the register pair r24:r25
+    ; pop a 16-bit value into the register pair r25:r24
     pop r25
     pop r24
 
-    ; pop a 16-bit value into the register pair r22:r23
+    ; pop a 16-bit value into the register pair r23:r22
     pop r23
     pop r22
 
@@ -173,7 +173,7 @@ builtin jump
     ld r24, Z
     ldd r25, Z+1
 
-    ; copy the argument from register pair r24:r25 to r30:r31, i.e. Z
+    ; copy the argument from register pair r25:r24 to r31:r30, i.e. Z
     movw r30, r24
 
     ; jump to the indicated instruction within the threaded code
