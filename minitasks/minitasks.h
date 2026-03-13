@@ -20,14 +20,14 @@
 
 
 // Maximum number of tasks in the system
-#define MAX_TASKS 8
+#define MAX_TASKS 6
 
 #define TASK_SIZE (sizeof(task_t))
 
 // Technically the size of a task's heap *and* stack, which grow towards each
 // other: the heap grows upwards, the stack downwards.
 // Also, the task's code lives on its heap!..
-#define HEAP_SIZE 128
+#define HEAP_SIZE 256
 
 typedef uint8_t task_id_t;
 
@@ -43,15 +43,16 @@ enum task_state {
 };
 
 enum message_type {
-    MESSAGE_PING              = 0x00,
-    MESSAGE_GET_OFFSETS       = 0x01,
-    MESSAGE_LOAD_TASK         = 0x02,
-    MESSAGE_START_TASK        = 0x03,
-    MESSAGE_STOP_TASK         = 0x04,
-    MESSAGE_INSPECT_TASK      = 0x05,
-    MESSAGE_KERNEL_LOG        = 0x06,
-    MESSAGE_TASK_LOG          = 0x07,
-    MESSAGE_TASK_STOPPED      = 0x08,
+    MESSAGE_PING                   = 0x00,
+    MESSAGE_GET_OFFSETS            = 0x01,
+    MESSAGE_GET_BUILTIN_LOCATIONS  = 0x02,
+    MESSAGE_LOAD_TASK              = 0x03,
+    MESSAGE_START_TASK             = 0x04,
+    MESSAGE_STOP_TASK              = 0x05,
+    MESSAGE_INSPECT_TASK           = 0x06,
+    MESSAGE_KERNEL_LOG             = 0x07,
+    MESSAGE_TASK_LOG               = 0x08,
+    MESSAGE_TASK_STOPPED           = 0x09,
 };
 
 typedef struct task {
@@ -133,5 +134,7 @@ _BUILTINS
 #define BUILTIN(name) &name,
 builtin_t *BUILTINS[] = { _BUILTINS };
 #undef BUILTIN
+
+#define N_BUILTINS (sizeof(BUILTINS) / sizeof(builtin_t*))
 
 #endif

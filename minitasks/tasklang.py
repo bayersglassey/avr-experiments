@@ -1,5 +1,11 @@
 import re
+import sys
 from typing import NamedTuple, List, Dict, Set
+
+
+if sys.version_info < (3, 7):
+    # For dict ordering
+    raise Exception(f"Python3.7 or higher required")
 
 
 class Compilation(NamedTuple):
@@ -56,7 +62,7 @@ class Compilation(NamedTuple):
         self.print_instructions()
 
 
-TOKEN_RE = re.compile(r' +|#.*|"([^"]|\\.)*"|\'\\?.\'|[^ ]+')
+TOKEN_RE = re.compile(r'\s+|#.*|"([^"]|\\.)*"|\'\\?.\'|\S+')
 NAME_RE = re.compile(r'[_a-zA-Z][_a-zA-Z0-9]*')
 
 
@@ -91,6 +97,7 @@ OPERATORS = {
 }
 
 # OS builtin functions which can't be used directly
+# NOTE: we use a dict for fast lookups + preserved order as of Python3.7
 PRIVATE_BUILTINS = {
     '_literal': None,
     '_store': None,
@@ -103,6 +110,7 @@ PRIVATE_BUILTINS = {
 }
 
 # OS builtin functions which can be used directly
+# NOTE: we use a dict for fast lookups + preserved order as of Python3.7
 PUBLIC_BUILTINS = {
     'dup': None,
     'swap': None,
@@ -123,7 +131,6 @@ PUBLIC_BUILTINS = {
     'logs': None,
     'logc': None,
     'logi': None,
-    'logp': None,
     'halt': None,
 
     # like 'halt', but increments instruction pointer, so task can be started
@@ -146,7 +153,7 @@ def tokenize(line):
     r"""
 
         >>> list(tokenize(r' 0 =i "Hello\nworld" { } # The rest is a comment'))
-        ['0', '=i', '"Hello\\nworld"', '{', '}', '# The rest is a comment']
+        ['0', '=i', '"Hello\\nworld"', '{', '}']
 
         >>> list(tokenize(r" 'x' '\0' "))
         ["'x'", "'\\0'"]
@@ -154,7 +161,7 @@ def tokenize(line):
     """
     for match in TOKEN_RE.finditer(line):
         token = match.group(0)
-        if token and token.count(' ') != len(token):
+        if not token.isspace() and not token.startswith('#'):
             yield token
 
 
@@ -189,9 +196,6 @@ def _parse(tokens, expected=None):
         try:
             if token in OPERATORS:
                 yield ('builtin', OPERATORS[token])
-            elif token[0] == '#':
-                # Comment
-                pass
             elif token in '()':
                 # Parentheses can be used as a visual aid, to indicate
                 # expected stack effects, e.g. "( 1 2 f ) ( 3 4 g ) h"
@@ -282,11 +286,11 @@ def parse(lines):
 def compile(parsed) -> Compilation:
     r"""
 
-        >>> comp = compile(parse('''0 =i loop {
+        >>> comp = compile('''0 =i loop {
         ...     i 3 < ! if { break }
         ...     atomic { "hello " logs i logi " world" logi }
         ...     i 1 - =i
-        ... }'''))
+        ... }''')
 
         >>> comp.strings
         {'hello ': 2, ' world': 9}
@@ -337,6 +341,11 @@ def compile(parsed) -> Compilation:
         034: halt
 
     """
+    if isinstance(parsed, str):
+        if ' ' not in parsed and '.' in parsed:
+            # Looks like a filename!..
+            parsed = open(parsed, 'r').readlines()
+        parsed = parse(parsed)
 
     strings: Dict[str, int] = {}
     vars: Dict[str, int] = {}

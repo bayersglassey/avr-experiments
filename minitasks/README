@@ -274,6 +274,10 @@ sub-protocol terminates.
 Errr... let's go with that.
 
 Here are the most important types of message sent by the client:
+* GET_OFFSETS
+  * initiated by client; kernel responds with some integer values, e.g.
+    max number of tasks, task structure size, offset within task structure
+    of heap etc -- things required when client is compiling tasklang code
 * LOAD_TASK
   * client sends a task id
   * client sends the intended contents of the task's CODE and HEAP

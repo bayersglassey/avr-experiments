@@ -125,11 +125,17 @@ void handle_ping(void) {
 }
 
 void handle_get_offsets(void) {
-    uart_put_uint16((uint16_t) BUILTINS);
     uart_put_uint16((uint16_t) TASKS);
     uart_put_uint16(MAX_TASKS);
     uart_put_uint16(TASK_SIZE);
     uart_put_uint16(offsetof(task_t, heap));
+}
+
+void handle_get_builtin_locations(void) {
+    uart_put_uint16((uint16_t) N_BUILTINS);
+    for (uint16_t i = 0; i < N_BUILTINS; i++) {
+        uart_put_uint16((uint16_t) BUILTINS[i]);
+    }
 }
 
 void handle_load_task(void) {
@@ -168,6 +174,7 @@ void handle_message(char msg_type) {
     switch (msg_type) {
         case MESSAGE_PING: handle_ping(); break;
         case MESSAGE_GET_OFFSETS: handle_get_offsets(); break;
+        case MESSAGE_GET_BUILTIN_LOCATIONS: handle_get_builtin_locations(); break;
         case MESSAGE_LOAD_TASK: handle_load_task(); break;
         case MESSAGE_START_TASK: handle_start_task(); break;
         case MESSAGE_STOP_TASK: handle_stop_task(); break;
