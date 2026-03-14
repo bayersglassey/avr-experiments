@@ -5,9 +5,26 @@
 ///////////////////////////////////////////////////////////////////////////////
 // TASK FUNCTIONS
 
-void start_task(task_t *task) {
+void tasks_init(void) {
+    for (task_id_t i = 0; i < MAX_TASKS; i++) {
+        task_t *task = &TASKS[i];
+        task->free = task->mem;
+    }
+}
+
+uint16_t get_heap_size(task_t *task) {
+    if (task->free < task->mem) die("FREE below start of CODE");
+    return (task->free - task->mem) - task->code_size;
+}
+
+void __attribute__((noreturn)) start_task(task_t *task) {
     task->state = TASK_STATE_STARTED;
-    // TODO...
+
+    // Temporary solution: jump directly to the task's code!..
+    // TODO: add task to the run queue instead...
+    run_task_immediate(task->mem, task->free,
+        task->mem + TASK_MEM_SIZE - 2);
+    //__builtin_unreachable();
 }
 
 void stop_task(task_t *task) {
@@ -115,7 +132,7 @@ static void led_toggle(void) {
 
 task_id_t get_task_id(void) {
     task_id_t task_id = uart_get();
-    if (task_id >= MAX_TASKS) die();
+    if (task_id >= MAX_TASKS) die("Bad task ID");
     return task_id;
 }
 
@@ -125,10 +142,17 @@ void handle_ping(void) {
 }
 
 void handle_get_offsets(void) {
+    uart_put_uint16(RAMSTART);
+
+    // NOTE: RAMEND is 2303, which looks to me like the last valid RAM
+    // address, whereas in the Python client, I want ram_end - ram_start to
+    // be RAM size, thus the "+ 1" here
+    uart_put_uint16(RAMEND + 1);
+
     uart_put_uint16((uint16_t) TASKS);
     uart_put_uint16(MAX_TASKS);
     uart_put_uint16(TASK_SIZE);
-    uart_put_uint16(offsetof(task_t, heap));
+    uart_put_uint16(offsetof(task_t, mem));
 }
 
 void handle_get_builtin_locations(void) {
@@ -142,15 +166,19 @@ void handle_load_task(void) {
     task_id_t task_id = get_task_id();
     task_t *task = &TASKS[task_id];
     stop_task(task);
-    uint16_t data_size = uart_get_uint16();
-    char *task_data = (char*) task->heap;
-    char *task_data_end = task_data + data_size;
-    while (task_data < task_data_end) *task_data++ = uart_get();
-    task_data_end += HEAP_SIZE - data_size;
-    while (task_data < task_data_end) *task_data++ = '\0';
+    uint16_t code_size = uart_get_uint16();
+    uint16_t heap_size = uart_get_uint16();
+    uint16_t data_size = code_size + heap_size;
+    task->code_size = code_size;
+    task->free = task->mem + data_size;
+    char *data = (char*) task->mem;
+    char *data_end = data + data_size;
+    while (data < data_end) *data++ = uart_get();
+    data_end += TASK_MEM_SIZE - data_size;
+    while (data < data_end) *data++ = '\0';
 }
 
-void handle_start_task(void) {
+void __attribute__((noreturn)) handle_start_task(void) {
     task_id_t task_id = get_task_id();
     task_t *task = &TASKS[task_id];
     start_task(task);
@@ -165,9 +193,39 @@ void handle_stop_task(void) {
 void handle_inspect_task(void) {
     task_id_t task_id = get_task_id();
     task_t *task = &TASKS[task_id];
-    char *task_data = (char*) task;
-    char *task_data_end = task_data + TASK_SIZE;
-    while (task_data < task_data_end) uart_put(*task_data++);
+    uart_put_uint16(task->code_size);
+    uart_put_uint16(get_heap_size(task));
+    char *data = (char*) task;
+    char *data_end = data + TASK_SIZE;
+    while (data < data_end) uart_put(*data++);
+}
+
+void handle_get_stack(void) {
+    // returns the stack pointer to client
+    uart_put_uint16((SPH << 8) | SPL);
+}
+
+void __attribute__((noreturn)) handle_set_stack(void) {
+    // sets the stack pointer
+    uint16_t ret = *(uint16_t*)(((SPH << 8) | SPL) + 2); // save return address
+    uart_put_uint16(ret);
+    uint16_t stack = uart_get_uint16();
+    SPL = stack;
+    SPH = stack >> 8;
+    __asm("ijmp" :: "z" (ret)); // return, by manually jumping to the return address we saved
+    __builtin_unreachable();
+}
+
+void handle_get_memory(void) {
+    char *p = (char*)uart_get_uint16();
+    char *end = p + uart_get_uint16();
+    while (p < end) uart_put(*p++);
+}
+
+void handle_set_memory(void) {
+    char *p = (char*)uart_get_uint16();
+    char *end = p + uart_get_uint16();
+    while (p < end) *p++ = uart_get();
 }
 
 void handle_message(char msg_type) {
@@ -179,11 +237,11 @@ void handle_message(char msg_type) {
         case MESSAGE_START_TASK: handle_start_task(); break;
         case MESSAGE_STOP_TASK: handle_stop_task(); break;
         case MESSAGE_INSPECT_TASK: handle_inspect_task(); break;
-        default:
-            uart_puts("Can't handle: ");
-            uart_put_hex(msg_type);
-            uart_put_newline();
-            die();
+        case MESSAGE_GET_STACK: handle_get_stack(); break;
+        case MESSAGE_SET_STACK: handle_set_stack(); break;
+        case MESSAGE_GET_MEMORY: handle_get_memory(); break;
+        case MESSAGE_SET_MEMORY: handle_set_memory(); break;
+        default: die("Bad input message type");
     }
 }
 
@@ -191,12 +249,7 @@ void send_ping(char c) {
     uart_put_message(MESSAGE_PING);
     uart_put(c);
     char pong = uart_get();
-    if (pong != c) {
-        uart_puts("Bad pong: ");
-        uart_put_hex(pong);
-        uart_put_newline();
-        die();
-    }
+    if (pong != c) die("Bad pong");
 }
 
 void send_kernel_log(void) {
@@ -251,8 +304,10 @@ ISR (USART0_UDRE_vect) {
 ///////////////////////////////////////////////////////////////////////////////
 // MAIN
 
-void die(void) {
+const char *death_message = NULL;
+void die(const char *msg) {
     cli(); // disable global interrupts, we're dead now
+    death_message = msg;
     led_off();
     while (1) {
         for (uint8_t i = 6; i--;) {
@@ -266,15 +321,15 @@ void die(void) {
 int main(void) {
     led_init();
     uart_init();
-    sei(); // enable global interrupts
+    tasks_init();
 
     // Indicate that we've started, by flashing the LED a few times!
-    for (uint8_t i = 3; --i;) {
+    for (uint8_t i = 8; i--;) {
         led_toggle();
-        _delay_ms(100);
+        _delay_ms(50);
     }
-    led_off();
 
+    sei(); // enable global interrupts
     while (1) {
         //_delay_ms(1000);
         //led_toggle();

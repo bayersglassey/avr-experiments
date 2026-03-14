@@ -7,14 +7,14 @@ import logging
 import selectors
 
 from functools import cached_property
-from typing import Dict, List, Set, NamedTuple
+from typing import Dict, List, Set, Tuple, NamedTuple
 
 from miniserial import Serial
 
 from tasklang import BUILTINS, Compilation, compile
 
 
-DEFAULT_TTY = '/dev/ttyUSB0'
+DEFAULT_TTY = os.environ.get('USBTTY', '/dev/ttyUSB0')
 DEFAULT_BAUD = 38400
 
 def encode_uint16(i) -> bytes:
@@ -34,26 +34,44 @@ MESSAGE_INSPECT_TASK           = b'\x06'
 MESSAGE_KERNEL_LOG             = b'\x07'
 MESSAGE_TASK_LOG               = b'\x08'
 MESSAGE_TASK_STOPPED           = b'\x09'
+MESSAGE_GET_STACK              = b'\x0a'
+MESSAGE_SET_STACK              = b'\x0b'
+MESSAGE_GET_MEMORY             = b'\x0c'
+MESSAGE_SET_MEMORY             = b'\x0d'
 
 
 class Offsets(NamedTuple):
-    tasks_table_location: int
-    max_tasks: int
-    task_size: int
-    heap_offset: int # actually offset of CODE + HEAP sections
+    ram_start: int # RAMSTART from <avr/iom328p.h>
+    ram_end: int # 1 + RAMEND from <avr/iom328p.h>
+    tasks_table_location: int # TASKS in minitasks.h
+    max_tasks: int # MAX_TASKS in minitasks.h
+    task_size: int # TASK_SIZE in minitasks.h, i.e. sizeof(task_t)
+    task_mem_offset: int # offset of task_t's mem field
+
+    @property
+    def ram_size(self) -> int:
+        return self.ram_end - self.ram_start
 
     @property
     def fields_size(self) -> int:
-        return self.heap_offset
+        # size of FIELDS
+        return self.task_mem_offset
 
     @property
-    def heap_size(self) -> int:
-        return self.task_size - self.heap_offset
+    def mem_size(self) -> int:
+        # size of CODE + HEAP + FREE + STACK
+        return self.task_size - self.task_mem_offset
 
 
 class TaskMemory(NamedTuple):
     fields: bytes
-    heap: bytes # CODE + HEAP + FREE + STACK
+    code: bytes
+    heap: bytes
+    rest: bytes # FREE + STACK
+
+    @property
+    def mem(self) -> bytes:
+        return self.code + self.heap + self.rest
 
 
 class Client:
@@ -70,8 +88,11 @@ class Client:
     def read_uint16(self) -> int:
         return decode_uint16(self.read(2))
 
+    def write_uint16(self, i: int):
+        self.write(encode_uint16(i))
+
     def send_bytes(self, data: bytes):
-        self.write(encode_uint16(len(data)))
+        self.write_uint16(len(data))
         self.write(data)
 
     def send_task_id(self, task_id: int):
@@ -87,12 +108,14 @@ class Client:
 
     def get_offsets(self) -> Offsets:
         self.write(b'\xff' + MESSAGE_GET_OFFSETS)
-        data = self.read(8)
+        data = self.read(12)
         return Offsets(
             decode_uint16(data[0:2]),
             decode_uint16(data[2:4]),
             decode_uint16(data[4:6]),
             decode_uint16(data[6:8]),
+            decode_uint16(data[8:10]),
+            decode_uint16(data[10:12]),
         )
 
     offsets = cached_property(get_offsets)
@@ -107,20 +130,26 @@ class Client:
     builtin_locations = cached_property(get_builtin_locations)
 
     @cached_property
-    def builtins_by_name(self) -> Dict[str, int]:
+    def builtin_locations_by_name(self) -> Dict[str, int]:
         return dict(zip(BUILTINS, self.builtin_locations))
 
-    def compile_task(self, task_id: int, comp) -> bytes:
+    @cached_property
+    def builtin_names_by_location(self) -> Dict[int, str]:
+        return dict(zip(self.builtin_locations, BUILTINS))
+
+    def compile_task(self, task_id: int, comp) -> Tuple[bytes, bytes]:
         """Produces the CODE + HEAP sections for a task, suitable for passing
         to self.load_task"""
         if not isinstance(comp, Compilation):
             comp = compile(comp)
+
         offsets = self.offsets # kick off GET_OFFSETS if needed
         builtin_locations = self.builtin_locations # kick off GET_BUILTIN_LOCATIONS if needed
         task_location = offsets.tasks_table_location + task_id * offsets.task_size
-        code_location = task_location + offsets.heap_offset
+        code_location = task_location + offsets.task_mem_offset
         heap_location = code_location + len(comp.instructions)
 
+        # Generate CODE
         buf = bytearray()
         instructions = list(comp.instructions)
         for i in comp.code_locations:
@@ -130,26 +159,28 @@ class Client:
         for i in comp.builtin_locations:
             instructions[i] = builtin_locations[instructions[i]]
         for instruction in instructions:
-            buf.extend(encode_uint16(instruction)) # CODE section
-        buf.extend(comp.heap) # HEAP section
-        return bytes(buf)
+            buf.extend(encode_uint16(instruction))
+        code = bytes(buf)
 
-    def load_task(self, task_id: int, payload):
+        return code, comp.heap # CODE + HEAP
+
+    def load_task(self, task_id: int, comp):
         offsets = self.offsets # kick off GET_OFFSETS if needed
-        if isinstance(payload, str):
-            payload = compile(payload)
-        if isinstance(payload, Compilation):
-            payload = self.compile_task(task_id, payload)
-        if not isinstance(payload, bytes):
-            raise Exception(f"Expected bytes, got {type(payload)}")
-        if len(payload) > offsets.heap_size:
-            raise Exception(f"Payload size {len(payload)} exceeds heap size {offsets.heap_size}")
-        self.write(b'\xff\x03')
+        if isinstance(comp, str):
+            comp = compile(comp)
+        code, heap = self.compile_task(task_id, comp)
+        size = len(code) + len(heap)
+        if size > offsets.mem_size:
+            raise Exception(f"Task payload too big: {size} > {offsets.mem_size}")
+        self.write(b'\xff' + MESSAGE_LOAD_TASK)
         self.send_task_id(task_id)
-        self.send_bytes(payload)
+        self.write_uint16(len(code))
+        self.write_uint16(len(heap))
+        self.write(code)
+        self.write(heap)
 
     def start_task(self, task_id: int):
-        self.write(b'\xff\x04')
+        self.write(b'\xff' + MESSAGE_START_TASK)
         self.send_task_id(task_id)
 
     def run_task(self, task_id: int, payload):
@@ -157,19 +188,77 @@ class Client:
         self.start_task(task_id)
 
     def stop_task(self, task_id: int):
-        self.write(b'\xff\x05')
+        self.write(b'\xff' + MESSAGE_STOP_TASK)
         self.send_task_id(task_id)
 
     def inspect_task(self, task_id: int) -> TaskMemory:
         offsets = self.offsets # kick off GET_OFFSETS if needed
-        self.write(b'\xff\x06')
+        self.write(b'\xff' + MESSAGE_INSPECT_TASK)
         self.send_task_id(task_id)
+        code_size = self.read_uint16()
+        heap_size = self.read_uint16()
+        rest_size = offsets.mem_size - code_size - heap_size
+        assert offsets.fields_size + code_size + heap_size + rest_size == offsets.task_size
         fields = self.read(offsets.fields_size)
-        heap = self.read(offsets.heap_size)
+        code = self.read(code_size)
+        heap = self.read(heap_size)
+        rest = self.read(rest_size)
         return TaskMemory(
             fields=fields,
+            code=code,
             heap=heap,
+            rest=rest,
         )
+
+    def get_stack(self) -> int:
+        self.write(b'\xff' + MESSAGE_GET_STACK)
+        return self.read_uint16()
+
+    def set_stack(self, stack: int):
+        self.write(b'\xff' + MESSAGE_SET_STACK)
+        print(hex(self.read_uint16()*2))
+        self.write_uint16(stack)
+
+    def get_memory(self, loc: int, size: int = None, type='b') -> bytes:
+        TYPES = ('b', 'i', 'ii')
+        if type not in TYPES:
+            raise Exception(f"Expected one of {', '.join(TYPES)}, got: {type}")
+        elif type == 'i':
+            if size not in (None, 1):
+                raise Exception("Bad size, should be 1 or unspecified")
+            size = 2
+        elif type == 'ii':
+            if size is None:
+                size = 2
+            else:
+                size *= 2
+        self.write(b'\xff' + MESSAGE_GET_MEMORY)
+        self.write_uint16(loc)
+        self.write_uint16(size)
+        data = self.read(size)
+        if type == 'i':
+            return decode_uint16(data)
+        elif type == 'ii':
+            values = []
+            for i in range(size // 2):
+                values.append(decode_uint16(data[i:i+2]))
+            return values
+        else:
+            return data
+
+    def set_memory(self, loc: int, data: bytes):
+        if isinstance(data, int):
+            data = encode_uint16(data)
+        elif isinstance(data, (list, tuple)):
+            buf = bytearray()
+            for d in data:
+                if isinstance(d, int):
+                    d = encode_uint16(d)
+                buf.extend(d)
+            data = bytes(buf)
+        self.write(b'\xff' + MESSAGE_SET_MEMORY)
+        self.write_uint16(loc)
+        self.send_bytes(data)
 
 
 def main():

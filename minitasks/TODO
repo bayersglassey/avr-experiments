@@ -1,33 +1,4 @@
 
-* ability to pass compiled tasklang programs to LOAD_TASK
-    * HEAP is easy, but CODE requires converting some instruction arguments
-      to CODE pointers, HEAP pointers, and builtin routine pointers
-    * Builtin routine pointers require a table, like avr-gcc's __vectors.
-      In avr/sfr_defs.h, there is:
-
-        #define _VECTOR(N) __vector_ ## N
-
-      Also look at /usr/lib/avr/lib/ldscripts/.
-      There is stuff like:
-
-          .text   :
-          {
-            *(.vectors)
-            KEEP(*(.vectors))
-
-      ...but where is the __vectors symbol I see in objdump output defined?..
-      Ah ha, look here:
-
-        ~/repos/avr-libc$ ack __vectors
-        crt1/gcrt1.S
-        187:	.if (. - __vectors < _VECTORS_SIZE)
-        195:	.global	__vectors
-        196:	.func	__vectors
-        197:__vectors:
-        359:	.set	__vector_default, __vectors
-        422:	ldi	r16, hh8(pm(__vectors))
-
-
 * ability to run programs
     * implement threaded code, the builtins
     * do multitasking from the very start: a timer interrupt which does

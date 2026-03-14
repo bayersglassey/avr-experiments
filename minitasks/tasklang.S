@@ -1,10 +1,30 @@
 
+#include <avr/common.h>
 #include <avr/io.h>
+
+#include "avrstuff.h"
+
 
 .macro builtin name
 .global builtin_\name
 builtin_\name:
 .endm
+
+
+.global run_task_immediate
+run_task_immediate:
+    ; NOTE: intended to be called by C code, with arguments:
+    ;  code, free, stack
+
+    movw r30, r24 ; load code pointer into Z
+    movw r28, r22 ; load heap pointer into Y
+                  ;   ...which points to FREE, i.e. just past top of heap
+
+    out SPL_IO_ADDR, r20  ; set stack pointer
+    out SPH_IO_ADDR, r21  ; ...
+
+    sei           ; enable interrupts
+    ijmp          ; aaaand we're off!
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -211,6 +231,17 @@ builtin end_atomic
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; PUBLIC BUILTINS
+
+builtin neg
+    pop r25
+    pop r24
+    ; TODO: understand the following!.. I got it from avr-gcc generated asm
+    neg	r25 ; two's compliment
+    neg	r24 ; ...
+    ldi r23, 0
+    sbc	r25, r23
+    adiw r30, 2
+    ijmp
 
 builtin dup
     ; TODO: see whether this can improved with LDS from stack pointer

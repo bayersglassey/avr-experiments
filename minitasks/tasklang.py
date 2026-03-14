@@ -112,6 +112,7 @@ PRIVATE_BUILTINS = {
 # OS builtin functions which can be used directly
 # NOTE: we use a dict for fast lookups + preserved order as of Python3.7
 PUBLIC_BUILTINS = {
+    'neg': None,
     'dup': None,
     'swap': None,
     'drop': None,
@@ -223,6 +224,15 @@ def _parse(tokens, expected=None):
                 yield ('string', s)
             elif token.isdigit() or token[0] == '-' and token[1:].isdigit():
                 i = int(token)
+                yield ('int', i)
+            elif token.startswith('0b'):
+                i = int(token, 2)
+                yield ('int', i)
+            elif token.startswith('0o'):
+                i = int(token, 8)
+                yield ('int', i)
+            elif token.startswith('0x'):
+                i = int(token, 16)
                 yield ('int', i)
             elif token[0] == '=' and NAME_RE.fullmatch(token[1:]):
                 yield ('store', token[1:])

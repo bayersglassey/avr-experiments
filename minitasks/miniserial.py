@@ -6,7 +6,7 @@ import struct
 import termios
 
 
-DEFAULT_FILENAME = '/dev/ttyUSB0'
+DEFAULT_FILENAME = os.environ.get('USBTTY', '/dev/ttyUSB0')
 DEFAULT_BAUD = 38400
 
 BAUDS = {int(k[1:]): getattr(termios, k)

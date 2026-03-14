@@ -18,16 +18,16 @@
 #include <util/delay.h>
 #include <util/atomic.h> // ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { ... }
 
+#include "avrstuff.h"
+
 
 // Maximum number of tasks in the system
 #define MAX_TASKS 6
 
 #define TASK_SIZE (sizeof(task_t))
 
-// Technically the size of a task's heap *and* stack, which grow towards each
-// other: the heap grows upwards, the stack downwards.
-// Also, the task's code lives on its heap!..
-#define HEAP_SIZE 256
+// The size of CODE + HEAP + FREE + STACK
+#define TASK_MEM_SIZE 256
 
 typedef uint8_t task_id_t;
 
@@ -53,12 +53,18 @@ enum message_type {
     MESSAGE_KERNEL_LOG             = 0x07,
     MESSAGE_TASK_LOG               = 0x08,
     MESSAGE_TASK_STOPPED           = 0x09,
+    MESSAGE_GET_STACK              = 0x0a,
+    MESSAGE_SET_STACK              = 0x0b,
+    MESSAGE_GET_MEMORY             = 0x0c,
+    MESSAGE_SET_MEMORY             = 0x0d,
 };
 
 typedef struct task {
     // TODO...
     uint8_t state; // enum task_state
-    char heap[HEAP_SIZE];
+    uint16_t code_size;
+    char *free; // pointer to FREE
+    char mem[TASK_MEM_SIZE];
 } task_t;
 
 task_t TASKS[MAX_TASKS] = {0};
@@ -66,7 +72,11 @@ task_t TASKS[MAX_TASKS] = {0};
 // A "builtin" is an assembly routine implementing a tasklang instruction
 typedef void builtin_t(void);
 
-void __attribute__((noreturn)) die(void);
+extern const char *death_message;
+void __attribute__((noreturn)) die(const char *msg);
+
+extern __attribute__((noreturn)) void run_task_immediate(char *code,
+    char *free, char *stack);
 
 // A listing of all tasklang "builtins".
 // NOTE: this list of builtins must be in the same order as that of BUILTINS
@@ -103,6 +113,7 @@ void __attribute__((noreturn)) die(void);
     BUILTIN(builtin_jumpifnot) \
     BUILTIN(builtin_atomic) \
     BUILTIN(builtin_end_atomic) \
+    BUILTIN(builtin_neg) \
     BUILTIN(builtin_dup) \
     BUILTIN(builtin_swap) \
     BUILTIN(builtin_drop) \
