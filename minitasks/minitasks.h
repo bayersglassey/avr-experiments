@@ -17,6 +17,7 @@
 #include <util/setbaud.h>
 #include <util/delay.h>
 #include <util/atomic.h> // ATOMIC_BLOCK(ATOMIC_RESTORESTATE) { ... }
+#include <avr/pgmspace.h>
 
 #include "avrstuff.h"
 
@@ -53,10 +54,8 @@ enum message_type {
     MESSAGE_KERNEL_LOG             = 0x07,
     MESSAGE_TASK_LOG               = 0x08,
     MESSAGE_TASK_STOPPED           = 0x09,
-    MESSAGE_GET_STACK              = 0x0a,
-    MESSAGE_SET_STACK              = 0x0b,
-    MESSAGE_GET_MEMORY             = 0x0c,
-    MESSAGE_SET_MEMORY             = 0x0d,
+    MESSAGE_GET_MEMORY             = 0x0a,
+    MESSAGE_SET_MEMORY             = 0x0b,
 };
 
 typedef struct task {
@@ -143,7 +142,7 @@ _BUILTINS
 
 // Table of assembly routines
 #define BUILTIN(name) &name,
-builtin_t *BUILTINS[] = { _BUILTINS };
+builtin_t * const BUILTINS[] PROGMEM = { _BUILTINS };
 #undef BUILTIN
 
 #define N_BUILTINS (sizeof(BUILTINS) / sizeof(builtin_t*))

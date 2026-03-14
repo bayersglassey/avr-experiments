@@ -34,10 +34,8 @@ MESSAGE_INSPECT_TASK           = b'\x06'
 MESSAGE_KERNEL_LOG             = b'\x07'
 MESSAGE_TASK_LOG               = b'\x08'
 MESSAGE_TASK_STOPPED           = b'\x09'
-MESSAGE_GET_STACK              = b'\x0a'
-MESSAGE_SET_STACK              = b'\x0b'
-MESSAGE_GET_MEMORY             = b'\x0c'
-MESSAGE_SET_MEMORY             = b'\x0d'
+MESSAGE_GET_MEMORY             = b'\x0a'
+MESSAGE_SET_MEMORY             = b'\x0b'
 
 
 class Offsets(NamedTuple):
@@ -210,15 +208,6 @@ class Client:
             rest=rest,
         )
 
-    def get_stack(self) -> int:
-        self.write(b'\xff' + MESSAGE_GET_STACK)
-        return self.read_uint16()
-
-    def set_stack(self, stack: int):
-        self.write(b'\xff' + MESSAGE_SET_STACK)
-        print(hex(self.read_uint16()*2))
-        self.write_uint16(stack)
-
     def get_memory(self, loc: int, size: int = None, type='b') -> bytes:
         TYPES = ('b', 'i', 'ii')
         if type not in TYPES:
@@ -240,7 +229,7 @@ class Client:
             return decode_uint16(data)
         elif type == 'ii':
             values = []
-            for i in range(size // 2):
+            for i in range(0, size, 2):
                 values.append(decode_uint16(data[i:i+2]))
             return values
         else:

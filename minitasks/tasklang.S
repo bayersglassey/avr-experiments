@@ -16,6 +16,8 @@ run_task_immediate:
     ; NOTE: intended to be called by C code, with arguments:
     ;  code, free, stack
 
+    ; NOTE: not currently working!..
+
     movw r30, r24 ; load code pointer into Z
     movw r28, r22 ; load heap pointer into Y
                   ;   ...which points to FREE, i.e. just past top of heap

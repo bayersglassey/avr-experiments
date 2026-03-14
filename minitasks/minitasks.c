@@ -17,14 +17,9 @@ uint16_t get_heap_size(task_t *task) {
     return (task->free - task->mem) - task->code_size;
 }
 
-void __attribute__((noreturn)) start_task(task_t *task) {
+void start_task(task_t *task) {
     task->state = TASK_STATE_STARTED;
-
-    // Temporary solution: jump directly to the task's code!..
-    // TODO: add task to the run queue instead...
-    run_task_immediate(task->mem, task->free,
-        task->mem + TASK_MEM_SIZE - 2);
-    //__builtin_unreachable();
+    // TODO...
 }
 
 void stop_task(task_t *task) {
@@ -158,7 +153,7 @@ void handle_get_offsets(void) {
 void handle_get_builtin_locations(void) {
     uart_put_uint16((uint16_t) N_BUILTINS);
     for (uint16_t i = 0; i < N_BUILTINS; i++) {
-        uart_put_uint16((uint16_t) BUILTINS[i]);
+        uart_put_uint16((uint16_t) pgm_read_byte(&BUILTINS[i]));
     }
 }
 
@@ -178,7 +173,7 @@ void handle_load_task(void) {
     while (data < data_end) *data++ = '\0';
 }
 
-void __attribute__((noreturn)) handle_start_task(void) {
+void handle_start_task(void) {
     task_id_t task_id = get_task_id();
     task_t *task = &TASKS[task_id];
     start_task(task);
@@ -198,22 +193,6 @@ void handle_inspect_task(void) {
     char *data = (char*) task;
     char *data_end = data + TASK_SIZE;
     while (data < data_end) uart_put(*data++);
-}
-
-void handle_get_stack(void) {
-    // returns the stack pointer to client
-    uart_put_uint16((SPH << 8) | SPL);
-}
-
-void __attribute__((noreturn)) handle_set_stack(void) {
-    // sets the stack pointer
-    uint16_t ret = *(uint16_t*)(((SPH << 8) | SPL) + 2); // save return address
-    uart_put_uint16(ret);
-    uint16_t stack = uart_get_uint16();
-    SPL = stack;
-    SPH = stack >> 8;
-    __asm("ijmp" :: "z" (ret)); // return, by manually jumping to the return address we saved
-    __builtin_unreachable();
 }
 
 void handle_get_memory(void) {
@@ -237,8 +216,6 @@ void handle_message(char msg_type) {
         case MESSAGE_START_TASK: handle_start_task(); break;
         case MESSAGE_STOP_TASK: handle_stop_task(); break;
         case MESSAGE_INSPECT_TASK: handle_inspect_task(); break;
-        case MESSAGE_GET_STACK: handle_get_stack(); break;
-        case MESSAGE_SET_STACK: handle_set_stack(); break;
         case MESSAGE_GET_MEMORY: handle_get_memory(); break;
         case MESSAGE_SET_MEMORY: handle_set_memory(); break;
         default: die("Bad input message type");
