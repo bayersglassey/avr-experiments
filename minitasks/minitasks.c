@@ -2,6 +2,10 @@
 #include "minitasks.h"
 
 
+// tasklang.S stores stack pointer in here so we can examine it
+uint16_t _sp = 0;
+
+
 ///////////////////////////////////////////////////////////////////////////////
 // TASK FUNCTIONS
 
@@ -19,7 +23,6 @@ uint16_t get_heap_size(task_t *task) {
 
 void start_task(task_t *task) {
     task->state = TASK_STATE_STARTED;
-    // TODO...
 }
 
 void stop_task(task_t *task) {
@@ -282,7 +285,7 @@ ISR (USART0_UDRE_vect) {
 // MAIN
 
 const char *death_message = NULL;
-void die(const char *msg) {
+void __attribute__((noreturn)) die(const char *msg) {
     cli(); // disable global interrupts, we're dead now
     death_message = msg;
     led_off();
@@ -292,6 +295,20 @@ void die(const char *msg) {
             _delay_ms(100);
         }
         _delay_ms(500);
+    }
+}
+
+void __attribute__((noreturn)) blink_forever(void) {
+    led_off();
+    while (1) {
+        led_toggle();
+        _delay_ms(300);
+        led_toggle();
+        _delay_ms(100);
+        led_toggle();
+        _delay_ms(100);
+        led_toggle();
+        _delay_ms(100);
     }
 }
 
@@ -306,10 +323,22 @@ int main(void) {
         _delay_ms(50);
     }
 
+    task_t *task = &TASKS[0];
+    task_state_t *state = &task->state;
+
     sei(); // enable global interrupts
     while (1) {
-        //_delay_ms(1000);
-        //led_toggle();
+
+        // Flash slowly
+        led_toggle();
+        _delay_ms(200);
+
+        if (*state /*== TASK_STATE_STARTED*/) {
+            char *code = task->mem;
+            char *heap = task->free;
+            char *stack = task->mem + TASK_MEM_SIZE - 1; // stack pointer should point at last byte of task's memory
+            run_task_immediate(code, heap, stack); // ...and we will never return...
+        }
     }
 
     return 0;

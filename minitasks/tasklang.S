@@ -16,17 +16,58 @@ run_task_immediate:
     ; NOTE: intended to be called by C code, with arguments:
     ;  code, free, stack
 
-    ; NOTE: not currently working!..
-
     movw r30, r24 ; load code pointer into Z
     movw r28, r22 ; load heap pointer into Y
                   ;   ...which points to FREE, i.e. just past top of heap
 
-    out SPL_IO_ADDR, r20  ; set stack pointer
-    out SPH_IO_ADDR, r21  ; ...
+    ; set the end of task 0's memory to the value 0xee
+    ; NOTE: THIS WORKS!!!
+    ;ldi r22, 0xee
+    ;ldi r26, 0x53
+    ;ldi r27, 0x02
+    ;st X, r22
 
-    sei           ; enable interrupts
-    ijmp          ; aaaand we're off!
+    ; push some values on the stack, before we jump it
+    ldi r24, 0xaa
+    push r24
+    ldi r24, 0xaa
+    push r24
+    ldi r24, 0xaa
+    push r24
+    ldi r24, 0xaa
+    push r24
+
+    ; point the stack pointer at the end of task 0's memory
+    ;ldi r24, 0x53 ; low byte of location of end of task 0's memory
+    ;ldi r25, 0x02 ; high byte of ...etc
+    in r24, SPL_IO_ADDR   ; get stack pointer
+    in r25, SPH_IO_ADDR   ; ...
+    sts _sp, r24          ; store in memory so we can inspect it
+    sts _sp+1, r25        ; ...
+    sbiw r24, 32          ; jump the stack a bit!..
+    out SPL_IO_ADDR, r24  ; set stack pointer
+    out SPH_IO_ADDR, r25  ; ...
+
+    ; Set stack pointer using its memory address instead of port?..
+    ;sts SPL, r24
+    ;sts SPH, r25
+
+    ; push some values onto the stack, after we've jumped it
+    ldi r24, 0xbb
+    push r24
+    ldi r24, 0xbb
+    push r24
+    ldi r24, 0xbb
+    push r24
+    ldi r24, 0xbb
+    push r24
+
+    ; loop forever
+    ;call blink_forever
+    _loop:
+    rjmp _loop
+
+    ijmp ; jump to code pointed to by Z
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

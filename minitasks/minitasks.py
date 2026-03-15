@@ -14,13 +14,16 @@ from miniserial import Serial
 from tasklang import BUILTINS, Compilation, compile
 
 
-DEFAULT_TTY = os.environ.get('USBTTY', '/dev/ttyUSB0')
-DEFAULT_BAUD = 38400
-
 def encode_uint16(i) -> bytes:
     return i.to_bytes(2, 'little')
 def decode_uint16(data: bytes) -> int:
     return int.from_bytes(data, 'little')
+
+def parse_ints(data: bytes) -> List[int]:
+    values = []
+    for i in range(0, len(data), 2):
+        values.append(decode_uint16(data[i:i+2]))
+    return values
 
 
 # Must match enum message_type in minitasks.h
@@ -60,21 +63,77 @@ class Offsets(NamedTuple):
         # size of CODE + HEAP + FREE + STACK
         return self.task_size - self.task_mem_offset
 
+    def get_task_loc(self, task_id: int) -> int:
+        return self.tasks_table_location + self.task_size * task_id
 
-class TaskMemory(NamedTuple):
-    fields: bytes
-    code: bytes
-    heap: bytes
-    rest: bytes # FREE + STACK
+
+class Memory(NamedTuple):
+    loc: int
+    data: bytes
 
     @property
-    def mem(self) -> bytes:
+    def size(self) -> int:
+        return len(self.data)
+
+    def __add__(self, other: 'Memory') -> 'Memory':
+        if other.loc != self.loc + self.size:
+            raise Exception(f"Not contiguous: {other.loc} != {self.loc + self.size}")
+        return Memory(
+            loc=self.loc,
+            data=self.data + other.data,
+        )
+
+    def part(self, i: int, size: int) -> 'Memory':
+        return Memory(
+            loc=self.loc + i,
+            data=self.data[i:i + size],
+        )
+
+    def print(self, style='x', w=32):
+        i = 0
+        loc = self.loc
+        size = self.size
+        while i < size:
+            line = self.data[i:i+w]
+            if style == 'x':
+                sline = line.hex(' ')
+            elif style == 'i':
+                sline = ' '.join(map(str, parse_ints(line)))
+            elif style == 'c':
+                sline = ''.join(c if c.isprintable() else '�'
+                    for c in line.decode('ascii', 'replace'))
+            elif style == 'r':
+                sline = repr(line)
+            else:
+                raise Exception(f"Got bad style {style!r}, expected one of 'x', 'i', 'c', 'r'")
+            print(f'0x{hex(loc + i)[2:].rjust(4, "0")}: {sline}')
+            i += w
+
+
+class TaskMemory(NamedTuple):
+    fields: Memory
+    code: Memory
+    heap: Memory
+    rest: Memory # FREE + STACK
+
+    @property
+    def mem(self) -> Memory:
         return self.code + self.heap + self.rest
+
+    def print(self, *args, **kwargs):
+        print(f"=== Fields:")
+        self.fields.print(*args, **kwargs)
+        print(f"=== Code:")
+        self.code.print(*args, **kwargs)
+        print(f"=== Heap:")
+        self.heap.print(*args, **kwargs)
+        print(f"=== Rest:")
+        self.rest.print(*args, **kwargs)
 
 
 class Client:
-    def __init__(self, filename=DEFAULT_TTY, baud=DEFAULT_BAUD):
-        self.serial = Serial(filename, baud)
+    def __init__(self, serial: Serial = None):
+        self.serial = serial or Serial()
         self.read = self.serial.read
         self.write = self.serial.write
         self.fd = self.serial.fd
@@ -193,25 +252,38 @@ class Client:
         offsets = self.offsets # kick off GET_OFFSETS if needed
         self.write(b'\xff' + MESSAGE_INSPECT_TASK)
         self.send_task_id(task_id)
+
+        # Read sizes
         code_size = self.read_uint16()
         heap_size = self.read_uint16()
         rest_size = offsets.mem_size - code_size - heap_size
         assert offsets.fields_size + code_size + heap_size + rest_size == offsets.task_size
+
+        # Read data
         fields = self.read(offsets.fields_size)
         code = self.read(code_size)
         heap = self.read(heap_size)
         rest = self.read(rest_size)
+
+        # Return TaskMemory
+        task_loc = offsets.get_task_loc(task_id)
+        code_loc = task_loc + offsets.fields_size
+        heap_loc = code_loc + code_size
+        rest_loc = heap_loc + heap_size
         return TaskMemory(
-            fields=fields,
-            code=code,
-            heap=heap,
-            rest=rest,
+            fields=Memory(task_loc, fields),
+            code=Memory(code_loc, code),
+            heap=Memory(heap_loc, heap),
+            rest=Memory(rest_loc, rest),
         )
 
-    def get_memory(self, loc: int, size: int = None, type='b') -> bytes:
-        TYPES = ('b', 'i', 'ii')
-        if type not in TYPES:
-            raise Exception(f"Expected one of {', '.join(TYPES)}, got: {type}")
+    def dump_ram(self) -> Memory:
+        return self.get_memory(self.offsets.ram_start, self.offsets.ram_size)
+
+    def get_memory(self, loc: int, size: int = None, type='b') -> Memory:
+        if type == 'b':
+            if size is None:
+                size = 1
         elif type == 'i':
             if size not in (None, 1):
                 raise Exception("Bad size, should be 1 or unspecified")
@@ -221,6 +293,8 @@ class Client:
                 size = 2
             else:
                 size *= 2
+        else:
+            raise Exception(f"Expected one of 'b', 'i', 'ii', got: {type!r}")
         self.write(b'\xff' + MESSAGE_GET_MEMORY)
         self.write_uint16(loc)
         self.write_uint16(size)
@@ -228,12 +302,9 @@ class Client:
         if type == 'i':
             return decode_uint16(data)
         elif type == 'ii':
-            values = []
-            for i in range(0, size, 2):
-                values.append(decode_uint16(data[i:i+2]))
-            return values
+            return parse_ints(data)
         else:
-            return data
+            return Memory(loc, data)
 
     def set_memory(self, loc: int, data: bytes):
         if isinstance(data, int):

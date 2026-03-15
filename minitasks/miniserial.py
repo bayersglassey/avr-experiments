@@ -4,9 +4,9 @@ import tty
 import fcntl
 import struct
 import termios
+from typing import Tuple
 
 
-DEFAULT_FILENAME = os.environ.get('USBTTY', '/dev/ttyUSB0')
 DEFAULT_BAUD = 38400
 
 BAUDS = {int(k[1:]): getattr(termios, k)
@@ -16,7 +16,17 @@ BAUDS = {int(k[1:]): getattr(termios, k)
 UINT_ZERO = struct.pack('I', 0)
 
 
-def open_serial(filename=DEFAULT_FILENAME, baud=DEFAULT_BAUD) -> int:
+def get_default_filename() -> str:
+    for i in range(5):
+        filename = f'/dev/ttyUSB{i}'
+        if os.path.exists(filename):
+            return filename
+    raise Exception("Couldn't find a ttyUSB")
+
+
+def open_serial(filename=None, baud=DEFAULT_BAUD) -> Tuple[str, int]:
+    if filename is None:
+        filename = get_default_filename()
     fd = os.open(filename, os.O_RDWR | os.O_NOCTTY)
     iflag, oflag, cflag, lflag, ispeed, ospeed, cc = termios.tcgetattr(fd)
     ispeed = ospeed = BAUDS[baud]
@@ -26,14 +36,13 @@ def open_serial(filename=DEFAULT_FILENAME, baud=DEFAULT_BAUD) -> int:
     tty.cfmakeraw(attr) # raw mode
     termios.tcsetattr(fd, termios.TCSAFLUSH, attr)
     termios.tcflush(fd, termios.TCIOFLUSH)
-    return fd
+    return filename, fd
 
 
 class Serial:
 
-    def __init__(self, filename=DEFAULT_FILENAME, baud=DEFAULT_BAUD):
-        self.filename = filename
-        self.fd = open_serial(filename)
+    def __init__(self, filename=None, baud=DEFAULT_BAUD):
+        self.filename, self.fd = open_serial(filename, baud)
 
     @property
     def n_available(self) -> int:

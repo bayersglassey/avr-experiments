@@ -36,12 +36,12 @@ typedef uint8_t task_id_t;
 // of a message
 #define MESSAGE_ESCAPE ((char) 0xFF)
 
-enum task_state {
+typedef enum task_state {
     TASK_STATE_STOPPED   = 0,
     TASK_STATE_STARTED   = 1,
     TASK_STATE_SLEEPING  = 2,
     TASK_STATE_QUEUED    = 3,
-};
+} task_state_t;
 
 enum message_type {
     MESSAGE_PING                   = 0x00,
@@ -60,7 +60,7 @@ enum message_type {
 
 typedef struct task {
     // TODO...
-    uint8_t state; // enum task_state
+    task_state_t state; // enum task_state
     uint16_t code_size;
     char *free; // pointer to FREE
     char mem[TASK_MEM_SIZE];
