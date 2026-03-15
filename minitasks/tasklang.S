@@ -45,7 +45,7 @@ loop_forever:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; OPERATORS
 
-builtin add
+BUILTIN add
     ; pop a 16-bit value into the register pair r25:r24
     pop r25
     pop r24
@@ -65,7 +65,7 @@ builtin add
     ; jump to the next threaded code instruction
     rjmp next
 
-builtin sub
+BUILTIN sub
     ; see the comments for "add"
     pop r25
     pop r24
@@ -77,32 +77,32 @@ builtin sub
     push r25
     rjmp next
 
-builtin mul
+BUILTIN mul
     rjmp builtin_halt
-builtin div
+BUILTIN div
     rjmp builtin_halt
-builtin mod
+BUILTIN mod
     rjmp builtin_halt
-builtin lshift
+BUILTIN lshift
     rjmp builtin_halt
-builtin rshift
+BUILTIN rshift
     rjmp builtin_halt
-builtin eq
+BUILTIN eq
     rjmp builtin_halt
-builtin ne
+BUILTIN ne
     rjmp builtin_halt
-builtin lt
+BUILTIN lt
     rjmp builtin_halt
-builtin gt
+BUILTIN gt
     rjmp builtin_halt
-builtin le
+BUILTIN le
     rjmp builtin_halt
-builtin ge
+BUILTIN ge
     rjmp builtin_halt
-builtin not
+BUILTIN not
     rjmp builtin_halt
 
-builtin bitnot
+BUILTIN bitnot
     pop r25
     pop r24
     com r24
@@ -111,7 +111,7 @@ builtin bitnot
     push r25
     rjmp next
 
-builtin bitand
+BUILTIN bitand
     pop r25
     pop r24
     pop r23
@@ -122,7 +122,7 @@ builtin bitand
     push r25
     rjmp next
 
-builtin bitor
+BUILTIN bitor
     pop r25
     pop r24
     pop r23
@@ -133,7 +133,7 @@ builtin bitor
     push r25
     rjmp next
 
-builtin bitxor
+BUILTIN bitxor
     pop r25
     pop r24
     pop r23
@@ -144,20 +144,20 @@ builtin bitxor
     push r25
     rjmp next
 
-builtin getptr
+BUILTIN getptr
     rjmp builtin_halt
-builtin getptrc
+BUILTIN getptrc
     rjmp builtin_halt
-builtin setptr
+BUILTIN setptr
     rjmp builtin_halt
-builtin setptrc
+BUILTIN setptrc
     rjmp builtin_halt
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; PRIVATE BUILTINS
 
-builtin literal
+BUILTIN literal
     ; load the integer argument from threaded code into a register pair
     ; (and increment Y so instead of pointing at the argument, it now points
     ; at next threaded code instruction)
@@ -171,7 +171,7 @@ builtin literal
     ; jump to the next threaded code instruction
     rjmp next
 
-builtin store
+BUILTIN store
     pop r25
     pop r24
     ld r30, Y+     ; load the argument following this instruction into Z
@@ -181,7 +181,7 @@ builtin store
     st Z+, r25     ; ...
     rjmp next
 
-builtin load
+BUILTIN load
     ld r30, Y+     ; load the argument following this instruction into Z
                    ; (and increment Y to next instruction)
     ld r31, Y+     ; ...
@@ -191,7 +191,7 @@ builtin load
     push r25
     rjmp next
 
-builtin jump
+BUILTIN jump
     ; load the argument (which is a pointer to another instruction within
     ; the threaded code)
     ld r24, Y+
@@ -203,7 +203,7 @@ builtin jump
     ; jump to the indicated instruction within the threaded code
     ijmp
 
-builtin jumpif
+BUILTIN jumpif
     pop r25
     pop r24
     _jumpif:
@@ -220,23 +220,23 @@ builtin jumpif
                     ; of our argument
         rjmp next   ; jump to next instruction
 
-builtin jumpifnot
+BUILTIN jumpifnot
     pop r25
     pop r24
     com r24 ; bitwise invert the TOS
     com r25 ; ...
     rjmp _jumpif
 
-builtin atomic
+BUILTIN atomic
     rjmp builtin_halt
-builtin end_atomic
+BUILTIN end_atomic
     rjmp builtin_halt
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; PUBLIC BUILTINS
 
-builtin neg
+BUILTIN neg
     pop r25
     pop r24
     ; TODO: understand the following!.. I got it from avr-gcc generated asm
@@ -246,7 +246,7 @@ builtin neg
     sbc	r25, r23
     rjmp next
 
-builtin dup
+BUILTIN dup
     ; TODO: see whether this can improved with LDS from stack pointer
     pop r25
     pop r24
@@ -256,7 +256,7 @@ builtin dup
     push r25
     rjmp next
 
-builtin swap
+BUILTIN swap
     ; TODO: see whether this can improved with LDS from stack pointer
     pop r25
     pop r24
@@ -268,27 +268,27 @@ builtin swap
     push r23
     rjmp next
 
-builtin drop
+BUILTIN drop
     pop r25
     pop r24
     rjmp next
 
-builtin heap
+BUILTIN heap
     rjmp builtin_halt
-builtin hpush
+BUILTIN hpush
     rjmp builtin_halt
-builtin hpop
+BUILTIN hpop
     rjmp builtin_halt
-builtin hdrop
+BUILTIN hdrop
     rjmp builtin_halt
-builtin hpushc
+BUILTIN hpushc
     rjmp builtin_halt
-builtin hpopc
+BUILTIN hpopc
     rjmp builtin_halt
-builtin hdropc
+BUILTIN hdropc
     rjmp builtin_halt
 
-builtin assert
+BUILTIN assert
     pop r25
     pop r24
     or r24, r25 ; we want to know if any of the bits are 1
@@ -300,11 +300,11 @@ builtin assert
         ; TODO: send a TASK_STOPPED message
         rjmp loop_forever
 
-builtin error
+BUILTIN error
     ; TODO: send a TASK_STOPPED message
     rjmp loop_forever
 
-builtin set_led
+BUILTIN set_led
     pop r25
     pop r24
     or r24, r25
@@ -317,23 +317,23 @@ builtin set_led
         cbi	0x05, 5 ; turn LED off
         rjmp 1b
 
-builtin sleep
+BUILTIN sleep
     rjmp builtin_halt
-builtin getc
+BUILTIN getc
     rjmp builtin_halt
-builtin putc
+BUILTIN putc
     rjmp builtin_halt
-builtin logs
+BUILTIN logs
     rjmp builtin_halt
-builtin logc
+BUILTIN logc
     rjmp builtin_halt
-builtin logi
+BUILTIN logi
     rjmp builtin_halt
 
-builtin halt
+BUILTIN halt
     ; TODO: send a TASK_STOPPED message
     rjmp loop_forever
 
-builtin pause
+BUILTIN pause
     ; TODO: send a TASK_STOPPED message
     rjmp loop_forever
