@@ -27,7 +27,7 @@ run_task_immediate:
     ;ldi r27, 0x02
     ;st X, r22
 
-    ; push some values on the stack, before we jump it
+    ; push some values on the stack, before we modify it
     ldi r24, 0xaa
     push r24
     ldi r24, 0xaa
@@ -38,21 +38,31 @@ run_task_immediate:
     push r24
 
     ; point the stack pointer at the end of task 0's memory
-    ;ldi r24, 0x53 ; low byte of location of end of task 0's memory
-    ;ldi r25, 0x02 ; high byte of ...etc
+    ldi r24, 0x53 ; low byte of location of end of task 0's memory
+    ldi r25, 0x02 ; high byte of ...etc
+    out SPH_IO_ADDR, r25  ; set stack pointer
+    out SPL_IO_ADDR, r24  ; ...
     in r24, SPL_IO_ADDR   ; get stack pointer
     in r25, SPH_IO_ADDR   ; ...
     sts _sp, r24          ; store in memory so we can inspect it
     sts _sp+1, r25        ; ...
-    sbiw r24, 32          ; jump the stack a bit!..
-    out SPL_IO_ADDR, r24  ; set stack pointer
-    out SPH_IO_ADDR, r25  ; ...
+
+    ; subtract from the stack pointer, "jumping" it (as if we pushed a bunch
+    ; of stuff)
+    ; NOTE: THIS WORKS!!!
+    ;in r24, SPL_IO_ADDR   ; get stack pointer
+    ;in r25, SPH_IO_ADDR   ; ...
+    ;sts _sp, r24          ; store in memory so we can inspect it
+    ;sts _sp+1, r25        ; ...
+    ;sbiw r24, 32          ; jump the stack a bit!..
+    ;out SPL_IO_ADDR, r24  ; set stack pointer
+    ;out SPH_IO_ADDR, r25  ; ...
 
     ; Set stack pointer using its memory address instead of port?..
     ;sts SPL, r24
     ;sts SPH, r25
 
-    ; push some values onto the stack, after we've jumped it
+    ; push some values onto the stack, after we've modified it
     ldi r24, 0xbb
     push r24
     ldi r24, 0xbb
