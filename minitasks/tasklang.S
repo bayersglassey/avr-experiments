@@ -184,10 +184,7 @@ BUILTIN bitnot
     rjmp _next
 
 BUILTIN bitand
-    pop r25
-    pop r24
-    pop r23
-    pop r22
+    _BINARYPOP
     and r24, r22
     and r25, r23
     push r24
@@ -195,10 +192,7 @@ BUILTIN bitand
     rjmp _next
 
 BUILTIN bitor
-    pop r25
-    pop r24
-    pop r23
-    pop r22
+    _BINARYPOP
     or r24, r22
     or r25, r23
     push r24
@@ -206,10 +200,7 @@ BUILTIN bitor
     rjmp _next
 
 BUILTIN bitxor
-    pop r25
-    pop r24
-    pop r23
-    pop r22
+    _BINARYPOP
     eor r24, r22
     eor r25, r23
     push r24
@@ -217,13 +208,41 @@ BUILTIN bitxor
     rjmp _next
 
 BUILTIN getptr
-    rjmp builtin_halt
+    pop r31    ; pop a pointer from the stack into Z
+    pop r30    ; ...
+    ld r24, Z+ ; get the 16-bit value pointed at by Z
+    ld r25, Z+ ; ...
+    push r24   ; push the value onto stack
+    push r25   ; ...
+    rjmp _next
+
 BUILTIN getptrc
-    rjmp builtin_halt
+    pop r31    ; pop a pointer from the stack into Z
+    pop r30    ; ...
+    ld r24, Z+ ; get the 8-bit value pointed at by Z
+    push r24   ; push the value onto stack
+    ldi r24, 0 ; push 0 for the high byte
+    push r24   ; ...
+    rjmp _next
+
 BUILTIN setptr
-    rjmp builtin_halt
+    pop r31    ; pop a pointer from the stack into Z
+    pop r30    ; ...
+    pop r25    ; pop a 16-bit value from the stack
+    pop r24    ; ...
+    st Z+, r24 ; store the value at the location pointed at by Z
+    st Z+, r25 ; ...
+    rjmp _next
+
 BUILTIN setptrc
-    rjmp builtin_halt
+    pop r31    ; pop a pointer from the stack into Z
+    pop r30    ; ...
+    pop r25    ; pop a 16-bit value from the stack (but we will "coerce" it
+               ; to 8-bit)
+    pop r24    ; ...
+    st Z+, r24 ; store the lower byte of the value at the location pointed
+               ; at by Z
+    rjmp _next
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -300,9 +319,16 @@ BUILTIN jumpifnot
     rjmp _jumpif
 
 BUILTIN atomic
-    rjmp builtin_halt
+    ; start an atomic "block" by disabling interrupts
+    ; NOTE: THIS INSTRUCTION IS SUPER HACKY!..
+    cli
+    rjmp _next
+
 BUILTIN end_atomic
-    rjmp builtin_halt
+    ; end an atomic "block" by enabling interrupts
+    ; NOTE: THIS INSTRUCTION IS SUPER HACKY!..
+    sei
+    rjmp _next
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -330,14 +356,11 @@ BUILTIN dup
 
 BUILTIN swap
     ; TODO: see whether this can improved with LDS from stack pointer
-    pop r25
-    pop r24
-    pop r23
-    pop r22
-    push r24
-    push r25
-    push r22
-    push r23
+    _BINARYPOP ; if stack look like: x y ...then x=r25:r24, y=r23:r22
+    push r22 ; push y
+    push r23 ; ...
+    push r24 ; push x
+    push r25 ; ...
     rjmp _next
 
 BUILTIN drop

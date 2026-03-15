@@ -1,9 +1,41 @@
 
+* update README's "tasklang runtime" section
+    * Y is code pointer
+    * X is heap pointer (errr, free pointer?.. cos it points to FREE)
+    * r22 - r25 and Z need to be saved during context switches
+    * task->free should be updated to X on context switch
+
 * implement multitasking
     * timer interrupt
     * context switching
+        * task->free should be updated to X on context switch!..
+          ...or ideally, at the start of every interrupt.
+          But that's probably not gonna happen for interrupts written in C.
+          Or... maybe let's just simplify, and have the heap instructions
+          call a C function which updates current task's free pointer?..
+    * run queue
+        ...OR, can we cheat for now?.. I wanted to get this project done in
+        a week, but figuring out how to assign to the dang stack pointer
+        slowed me down... can we forget about resource queues for now, and
+        just have a timer interrupt which switches execution to the next
+        task whose state is RUNNING?.. so, we just cycle through the task
+        table.
+        And then for reading/writing, we uhhhh just have the tasks disable
+        interrupts while they do it?..
+        Hmmmm no, that would be gross.
+        But ok, let's do this simple "cycle through tasks" approach for now,
+        but not implement UART stuff for tasks yet.
+        Instead, let's just make sure we can see multiple tasks blinking the
+        LED at different rates, for now.
+        And also let's implement TASK_STOPPED, get the client to recognize
+        it, make sure we can run programs really quickly, etc.
+        That also lets us write some unit tests using the Python client to
+        run small programs to completion & examine their outputs.
 
 * resource queues
+    * run queue
+    * sleep queue (each entry needs an associated time?..)
+    * uart read/write queues
 
 * improve the usage of stack by interrupts!.. currently they use currently running
   task's stack, which is wasteful, since every task needs to keep a bunch of stack
