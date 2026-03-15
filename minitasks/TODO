@@ -1,7 +1,11 @@
 
-* ability to run programs
-    * implement threaded code, the builtins
-    * do multitasking from the very start: a timer interrupt which does
-      context switching
+* implement multitasking
+    * timer interrupt
+    * context switching
 
 * resource queues
+
+* improve the usage of stack by interrupts!.. currently they use currently running
+  task's stack, which is wasteful, since every task needs to keep a bunch of stack
+  space clear in case an interrupt needs it!..
+  see also the comment in the INTERRUPTS section of minitasks.c

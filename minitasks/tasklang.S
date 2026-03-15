@@ -10,6 +10,15 @@
 builtin_\name:
 .endm
 
+.macro _BINARYPOP
+    ; pop 2 values off the stack, for implementing binary operators.
+    ; if stack looks like: x y
+    ; ...then this will result in: r25:r24 = x, r23:r22 = y
+    pop r23
+    pop r22
+    pop r25
+    pop r24
+.endm
 
 .global run_task_immediate
 run_task_immediate:
@@ -27,16 +36,14 @@ run_task_immediate:
     out SPL_IO_ADDR, r20  ; ...
 
     ; jump to next instruction, i.e. first instruction in task's CODE
-    rjmp next
+    rjmp _next
 
-
-next:
+_next:
     ; Jump to the next threaded code instruction, and also increment the
     ; threaded code instruction pointer.
     ld r30, Y+   ; load whatever Y is pointing at into Z, and increment Y
     ld r31, Y+   ; ...
     ijmp         ; jump to the code pointed to by Z
-
 
 loop_forever:
     rjmp loop_forever
@@ -46,15 +53,13 @@ loop_forever:
 ;; OPERATORS
 
 BUILTIN add
-    ; pop a 16-bit value into the register pair r25:r24
-    pop r25
-    pop r24
+    ; x y + -> x+y
 
-    ; pop a 16-bit value into the register pair r23:r22
-    pop r23
-    pop r22
+    ; pop two 16-bit values (x, y) from the stack
+    ; x = r25:r24, y = r23:r22
+    _BINARYPOP
 
-    ; add the two values together
+    ; add the two values together (x += y)
     add r24, r22 ; add the lower bytes
     adc r25, r23 ; add the higher bytes with carry
 
@@ -63,20 +68,19 @@ BUILTIN add
     push r25
 
     ; jump to the next threaded code instruction
-    rjmp next
+    rjmp _next
 
 BUILTIN sub
+    ; x y + -> x-y
     ; see the comments for "add"
-    pop r25
-    pop r24
-    pop r23
-    pop r22
-    sub r24, r22
-    sbc r25, r23
+    _BINARYPOP
+    sub r24, r22 ; x -= y
+    sbc r25, r23 ; ...
     push r24
     push r25
-    rjmp next
+    rjmp _next
 
+; TODO...
 BUILTIN mul
     rjmp builtin_halt
 BUILTIN div
@@ -87,20 +91,88 @@ BUILTIN lshift
     rjmp builtin_halt
 BUILTIN rshift
     rjmp builtin_halt
+
+_return_true:
+    ; return true from an instruction, i.e. push 1 onto stack and jump to
+    ; next instruction
+    ldi r24, 1
+    push r24
+    ldi r24, 0
+    push r24
+    rjmp _next
+
+_return_false:
+    ; return false from an instruction, i.e. push 0 onto stack and jump to
+    ; next instruction
+    ldi r24, 0
+    push r24
+    push r24
+    rjmp _next
+
+; NOTE: the binary logical operator implementations below were tested using
+; the Python client as follows:
+;
+;   code = ' 0xee '.join(f'1 1 {op} 1 2 {op} 2 1 {op}' for op in ('==', '!=', '<', '<=', '>', '>='))
+;   c.run_task(0, code)
+;   _bytemap = {' ':b'\x00\xee', '0':b'\x00\x00', '1':b'\x00\x01'}
+;   expected = b''.join(_bytemap[c] for c in ''.join(reversed('100 011 010 110 001 101')))
+;   assert c.inspect_task(0).rest.data[-len(expected):] == expected
+;
+
 BUILTIN eq
-    rjmp builtin_halt
+    ; x y + -> x==y
+    _BINARYPOP
+    cp r24, r22  ; compare x - y
+    cpc r25, r23 ; ...
+    breq _return_true
+    rjmp _return_false
+
 BUILTIN ne
-    rjmp builtin_halt
+    ; x y + -> x!=y
+    _BINARYPOP
+    cp r24, r22  ; compare x - y
+    cpc r25, r23 ; ...
+    brne _return_true
+    rjmp _return_false
+
 BUILTIN lt
-    rjmp builtin_halt
+    ; x y + -> x<y
+    _BINARYPOP
+    cp r24, r22  ; compare x - y
+    cpc r25, r23 ; ...
+    brcs _return_true ; branch if carry set, i.e. if x < y
+    rjmp _return_false
+
 BUILTIN gt
-    rjmp builtin_halt
+    ; x y + -> x>y
+    _BINARYPOP
+    cp r22, r24  ; compare y - x
+    cpc r23, r25 ; ...
+    brcs _return_true ; branch if carry set, i.e. if y < x
+    rjmp _return_false
+
 BUILTIN le
-    rjmp builtin_halt
+    ; x y + -> x<=y
+    _BINARYPOP
+    cp r22, r24  ; compare y - x
+    cpc r23, r25 ; ...
+    brcc _return_true ; branch if carry clear (not set), i.e. if not y < x
+    rjmp _return_false
+
 BUILTIN ge
-    rjmp builtin_halt
+    ; x y + -> x>=y
+    _BINARYPOP
+    cp r24, r22  ; compare x - y
+    cpc r25, r23 ; ...
+    brcc _return_true ; branch if carry clear (not set), i.e. if not x < y
+    rjmp _return_false
+
 BUILTIN not
-    rjmp builtin_halt
+    pop r25
+    pop r24
+    or r24, r25 ; we want to know if any of the bits are 1
+    breq _return_false ; if it was true, return false
+    rjmp _return_true  ; if it was false, return true
 
 BUILTIN bitnot
     pop r25
@@ -109,7 +181,7 @@ BUILTIN bitnot
     com r25
     push r24
     push r25
-    rjmp next
+    rjmp _next
 
 BUILTIN bitand
     pop r25
@@ -120,7 +192,7 @@ BUILTIN bitand
     and r25, r23
     push r24
     push r25
-    rjmp next
+    rjmp _next
 
 BUILTIN bitor
     pop r25
@@ -131,7 +203,7 @@ BUILTIN bitor
     or r25, r23
     push r24
     push r25
-    rjmp next
+    rjmp _next
 
 BUILTIN bitxor
     pop r25
@@ -142,7 +214,7 @@ BUILTIN bitxor
     eor r25, r23
     push r24
     push r25
-    rjmp next
+    rjmp _next
 
 BUILTIN getptr
     rjmp builtin_halt
@@ -169,7 +241,7 @@ BUILTIN literal
     push r25
 
     ; jump to the next threaded code instruction
-    rjmp next
+    rjmp _next
 
 BUILTIN store
     pop r25
@@ -179,7 +251,7 @@ BUILTIN store
     ld r31, Y+     ; ...
     st Z+, r24     ; store into the memory pointed to by Z
     st Z+, r25     ; ...
-    rjmp next
+    rjmp _next
 
 BUILTIN load
     ld r30, Y+     ; load the argument following this instruction into Z
@@ -189,7 +261,7 @@ BUILTIN load
     ld r25, Z+     ; ...
     push r24
     push r25
-    rjmp next
+    rjmp _next
 
 BUILTIN jump
     ; load the argument (which is a pointer to another instruction within
@@ -213,12 +285,12 @@ BUILTIN jumpif
         ld r24, Y+     ; load the argument
         ld r25, Y+     ; ...
         movw r28, r24  ; set Y to the argument
-        rjmp next      ; jump to the argument
+        rjmp _next      ; jump to the argument
     2:
         ; TOS was 0
         adiw r28, 2 ; add 2 bytes, so we point at next instruction instead
                     ; of our argument
-        rjmp next   ; jump to next instruction
+        rjmp _next   ; jump to next instruction
 
 BUILTIN jumpifnot
     pop r25
@@ -244,7 +316,7 @@ BUILTIN neg
     neg	r24 ; ...
     ldi r23, 0
     sbc	r25, r23
-    rjmp next
+    rjmp _next
 
 BUILTIN dup
     ; TODO: see whether this can improved with LDS from stack pointer
@@ -254,7 +326,7 @@ BUILTIN dup
     push r25
     push r24
     push r25
-    rjmp next
+    rjmp _next
 
 BUILTIN swap
     ; TODO: see whether this can improved with LDS from stack pointer
@@ -266,27 +338,33 @@ BUILTIN swap
     push r25
     push r22
     push r23
-    rjmp next
+    rjmp _next
 
 BUILTIN drop
     pop r25
     pop r24
-    rjmp next
+    rjmp _next
 
 BUILTIN heap
-    rjmp builtin_halt
+    ; push X (address of top of heap) onto stack
+    push r26
+    push r27
+    rjmp _next
+
 BUILTIN hpush
-    rjmp builtin_halt
-BUILTIN hpop
-    rjmp builtin_halt
-BUILTIN hdrop
-    rjmp builtin_halt
+    ; pop a value from stack, push it onto the heap
+    pop r25
+    pop r24
+    st X+, r24
+    st X+, r25
+    rjmp _next
+
 BUILTIN hpushc
-    rjmp builtin_halt
-BUILTIN hpopc
-    rjmp builtin_halt
-BUILTIN hdropc
-    rjmp builtin_halt
+    ; pop a value from stack, push its lower byte onto the heap
+    pop r25
+    pop r24
+    st X+, r24
+    rjmp _next
 
 BUILTIN assert
     pop r25
@@ -294,7 +372,7 @@ BUILTIN assert
     or r24, r25 ; we want to know if any of the bits are 1
     breq 1f
         ; TOS was 1: assertion passed!
-        rjmp next
+        rjmp _next
     1:
         ; TOS was 0: assertion failed!
         ; TODO: send a TASK_STOPPED message
@@ -312,7 +390,7 @@ BUILTIN set_led
         sbi	0x05, 5 ; turn LED on
     1:
         ; jump to next instruction
-        rjmp next
+        rjmp _next
     2:
         cbi	0x05, 5 ; turn LED off
         rjmp 1b

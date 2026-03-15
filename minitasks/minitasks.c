@@ -5,6 +5,8 @@
 // tasklang.S stores stack pointer in here so we can examine it
 uint16_t _sp = 0;
 
+#define __ALWAYS_INLINE__ inline __attribute__((always_inline))
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // TASK FUNCTIONS
@@ -18,7 +20,7 @@ void tasks_init(void) {
     }
 }
 
-uint16_t get_heap_size(task_t *task) {
+static __ALWAYS_INLINE__ uint16_t get_heap_size(task_t *task) {
     if (task->free < task->mem) die("FREE below start of CODE");
     return (task->free - task->mem) - task->code_size;
 }
@@ -53,36 +55,36 @@ void uart_init(void) {
     UCSR0C = (1 << UCSZ01) | (1 << UCSZ00); // 8 data bits, no parity, 1 stop bit
 }
 
-static char uart_get(void) {
+static __ALWAYS_INLINE__ char uart_get(void) {
     loop_until_bit_is_set(UCSR0A, RXC0);
     // "USART DATA REGISTER"
     return UDR0;
 }
 
-uint16_t uart_get_uint16(void) {
+static __ALWAYS_INLINE__ uint16_t uart_get_uint16(void) {
     // NOTE: little-endian
     int i = (uint8_t) uart_get();
     i |= ((uint8_t) uart_get()) << 8;
     return i;
 }
 
-static void uart_put(char c) {
+static __ALWAYS_INLINE__ void uart_put(char c) {
     loop_until_bit_is_set(UCSR0A, UDRE0);
     // "USART DATA REGISTER"
     UDR0 = c;
 }
 
-void uart_put_uint16(uint16_t i) {
+static __ALWAYS_INLINE__ void uart_put_uint16(uint16_t i) {
     // NOTE: little-endian
     uart_put(i & 0xff);
     uart_put(i >> 8);
 }
 
-static char to_hex(uint8_t c) {
+static __ALWAYS_INLINE__ char to_hex(uint8_t c) {
     return c < 10? '0' + c: c < 16? 'A' + c - 10: '?';
 }
 
-void uart_put_hex(uint8_t c) {
+static __ALWAYS_INLINE__ void uart_put_hex(uint8_t c) {
     uart_put('0');
     uart_put('x');
     char a = to_hex(c >> 4);
@@ -91,17 +93,17 @@ void uart_put_hex(uint8_t c) {
     uart_put(b);
 }
 
-static void uart_put_newline(void) {
+static __ALWAYS_INLINE__ void uart_put_newline(void) {
     uart_put('\r');
     uart_put('\n');
 }
 
-void uart_puts(const char *msg) {
+static __ALWAYS_INLINE__ void uart_puts(const char *msg) {
     char c;
     while ((c = *msg++)) uart_put(c);
 }
 
-static void uart_put_message(char msg_type) {
+static __ALWAYS_INLINE__ void uart_put_message(char msg_type) {
     uart_put(MESSAGE_ESCAPE);
     uart_put(msg_type);
 }
@@ -114,15 +116,15 @@ void led_init(void) {
     DDRB |= (1 << PB5);
 }
 
-static void led_on(void) {
+static __ALWAYS_INLINE__ void led_on(void) {
     PORTB |= (1 << PB5);
 }
 
-static void led_off(void) {
+static __ALWAYS_INLINE__ void led_off(void) {
     PORTB &= ~(1 << PB5);
 }
 
-static void led_toggle(void) {
+static __ALWAYS_INLINE__ void led_toggle(void) {
     PORTB ^= (1 << PB5);
 }
 
@@ -130,18 +132,18 @@ static void led_toggle(void) {
 ///////////////////////////////////////////////////////////////////////////////
 // OS/CLIENT MESSAGES
 
-task_id_t get_task_id(void) {
+static __ALWAYS_INLINE__ task_id_t get_task_id(void) {
     task_id_t task_id = uart_get();
     if (task_id >= MAX_TASKS) die("Bad task ID");
     return task_id;
 }
 
-void handle_ping(void) {
+static __ALWAYS_INLINE__ void handle_ping(void) {
     char c = uart_get();
     uart_put(c);
 }
 
-void handle_get_offsets(void) {
+static __ALWAYS_INLINE__ void handle_get_offsets(void) {
     uart_put_uint16(RAMSTART);
 
     // NOTE: RAMEND is 2303, which looks to me like the last valid RAM
@@ -155,14 +157,14 @@ void handle_get_offsets(void) {
     uart_put_uint16(offsetof(task_t, mem));
 }
 
-void handle_get_builtin_locations(void) {
+static __ALWAYS_INLINE__ void handle_get_builtin_locations(void) {
     uart_put_uint16((uint16_t) N_BUILTINS);
     for (uint16_t i = 0; i < N_BUILTINS; i++) {
         uart_put_uint16(pgm_read_word(&BUILTINS[i]));
     }
 }
 
-void handle_load_task(void) {
+static __ALWAYS_INLINE__ void handle_load_task(void) {
     task_id_t task_id = get_task_id();
     task_t *task = &TASKS[task_id];
     stop_task(task);
@@ -178,19 +180,19 @@ void handle_load_task(void) {
     while (data < data_end) *data++ = '\0';
 }
 
-void handle_start_task(void) {
+static __ALWAYS_INLINE__ void handle_start_task(void) {
     task_id_t task_id = get_task_id();
     task_t *task = &TASKS[task_id];
     start_task(task);
 }
 
-void handle_stop_task(void) {
+static __ALWAYS_INLINE__ void handle_stop_task(void) {
     task_id_t task_id = get_task_id();
     task_t *task = &TASKS[task_id];
     stop_task(task);
 }
 
-void handle_inspect_task(void) {
+static __ALWAYS_INLINE__ void handle_inspect_task(void) {
     task_id_t task_id = get_task_id();
     task_t *task = &TASKS[task_id];
     uart_put_uint16(task->code_size);
@@ -200,19 +202,19 @@ void handle_inspect_task(void) {
     while (data < data_end) uart_put(*data++);
 }
 
-void handle_get_memory(void) {
+static __ALWAYS_INLINE__ void handle_get_memory(void) {
     char *p = (char*)uart_get_uint16();
     char *end = p + uart_get_uint16();
     while (p < end) uart_put(*p++);
 }
 
-void handle_set_memory(void) {
+static __ALWAYS_INLINE__ void handle_set_memory(void) {
     char *p = (char*)uart_get_uint16();
     char *end = p + uart_get_uint16();
     while (p < end) *p++ = uart_get();
 }
 
-void handle_message(char msg_type) {
+static __ALWAYS_INLINE__ void handle_message(char msg_type) {
     switch (msg_type) {
         case MESSAGE_PING: handle_ping(); break;
         case MESSAGE_GET_OFFSETS: handle_get_offsets(); break;
@@ -254,6 +256,23 @@ void send_task_stopped(task_id_t task_id, char reason) {
 
 ///////////////////////////////////////////////////////////////////////////////
 // INTERRUPTS
+//
+// NOTE: just about every function we call from these interrupts is marked with
+// static __ALWAYS_INLINE__ so that we don't have to put as much stuff on the
+// stack, because each of our tasks has its own stack, and interrupts end up
+// using the stack of whichever task is currently running.
+// This means that the more stack our interrupts might need to use, the more
+// memory we need to allocate for each task (i.e. the bigger TASK_SIZE must
+// be), which decreases the maximum number of tasks we can have (i.e.
+// MAX_TASKS).
+//
+// A different (better?..) way to handle all this might be to allocate a
+// separate stack space for interrupts to use, and have all interrupts begin
+// by setting the stack pointer to it, and end by restoring the old stack
+// pointer. Or something.
+// But for now, we're keeping things relatively simple (and perhaps therefore
+// inefficient)...
+//
 
 ISR (USART_RX_vect) {
     // USART received data
@@ -314,6 +333,30 @@ void __attribute__((noreturn)) blink_forever(void) {
     }
 }
 
+void __attribute__((noreturn)) mainloop(void) {
+    while (1) {
+        for (task_id_t task_id = 0; task_id < MAX_TASKS; task_id++) {
+            task_t *task = &TASKS[task_id];
+
+            // Flash slowly as we check for tasks
+            led_toggle();
+            _delay_ms(200);
+
+            // Get task's state, which is an atomic operation since the
+            // state is a uint8_t
+            if (task->state == TASK_STATE_STARTED) {
+                // NOTE: these task field accesses are not atomic, so
+                // hopefully no interrupt is concurrently messing with them...
+                char *code = task->mem;
+                char *heap = task->free;
+                char *stack = task->mem + TASK_MEM_SIZE - 1; // stack pointer should point at last byte of task's memory
+                current_task_id = 0;
+                run_task_immediate(code, heap, stack); // ...and we will never return...
+            }
+        }
+    }
+}
+
 int main(void) {
     led_init();
     uart_init();
@@ -325,24 +368,7 @@ int main(void) {
         _delay_ms(50);
     }
 
-    task_t *task = &TASKS[0];
-    task_state_t *state = &task->state;
-
     sei(); // enable global interrupts
-    while (1) {
-
-        // Flash slowly
-        led_toggle();
-        _delay_ms(200);
-
-        if (*state == TASK_STATE_STARTED) {
-            char *code = task->mem;
-            char *heap = task->free;
-            char *stack = task->mem + TASK_MEM_SIZE - 1; // stack pointer should point at last byte of task's memory
-            current_task_id = 0;
-            run_task_immediate(code, heap, stack); // ...and we will never return...
-        }
-    }
-
+    mainloop(); // wait forever for runnable tasks
     return 0;
 }

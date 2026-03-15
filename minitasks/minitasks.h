@@ -23,12 +23,12 @@
 
 
 // Maximum number of tasks in the system
-#define MAX_TASKS 6
+#define MAX_TASKS 4
 
 #define TASK_SIZE (sizeof(task_t))
 
 // The size of CODE + HEAP + FREE + STACK
-#define TASK_MEM_SIZE 256
+#define TASK_MEM_SIZE (256 + 128)
 
 typedef uint8_t task_id_t;
 
@@ -36,12 +36,13 @@ typedef uint8_t task_id_t;
 // of a message
 #define MESSAGE_ESCAPE ((char) 0xFF)
 
-typedef enum task_state {
+typedef uint8_t task_state_t;
+enum task_state {
     TASK_STATE_STOPPED   = 0,
     TASK_STATE_STARTED   = 1,
     TASK_STATE_SLEEPING  = 2,
     TASK_STATE_QUEUED    = 3,
-} task_state_t;
+};
 
 enum message_type {
     MESSAGE_PING                   = 0x00,
@@ -118,11 +119,7 @@ extern __attribute__((noreturn)) void run_task_immediate(char *code,
     BUILTIN(builtin_drop) \
     BUILTIN(builtin_heap) \
     BUILTIN(builtin_hpush) \
-    BUILTIN(builtin_hpop) \
-    BUILTIN(builtin_hdrop) \
     BUILTIN(builtin_hpushc) \
-    BUILTIN(builtin_hpopc) \
-    BUILTIN(builtin_hdropc) \
     BUILTIN(builtin_assert) \
     BUILTIN(builtin_error) \
     BUILTIN(builtin_set_led) \

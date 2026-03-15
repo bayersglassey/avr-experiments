@@ -135,7 +135,7 @@ class TaskMemory(NamedTuple):
         print(f"=== Heap:")
         self.heap.print(*args, **kwargs)
         if self.rest is not None:
-            print(f"=== Rest:")
+            print(f"=== Free + Stack:")
             self.rest.print(*args, **kwargs)
 
 
