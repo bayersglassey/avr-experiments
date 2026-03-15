@@ -345,10 +345,7 @@ class Client:
 
 def main():
 
-    # Get client
-    filename = DEFAULT_TTY
-    baud = DEFAULT_BAUD
-    client = Client(filename, baud)
+    client = Client()
 
     stdin_fd = sys.stdin.fileno()
     stdout_fd = sys.stdout.fileno()
@@ -401,25 +398,50 @@ def main():
                 # Get a command from stdin
                 exit_cbreak()
                 try:
-                    cmd = input("Command: ")
+                    args = input("Command: ")
                 except KeyboardInterrupt:
                     break
                 finally:
                     enter_cbreak()
 
+                if not args:
+                    continue
+
+                def pop_arg(default=None):
+                    nonlocal args
+                    args = args.split(maxsplit=1)
+                    if not args:
+                        args = ''
+                        return default
+                    arg = args.pop(0)
+                    args = args[0] if args else ''
+                    return arg
+
                 # Handle command
-                cmd = [s.strip() for s in cmd.split()]
-                if cmd:
-                    args = cmd[1:]
-                    cmd = cmd[0]
+                try:
+                    cmd = pop_arg()
                     if cmd == 'hex':
+                        args = args.split()
                         client.write(b''.join(
                             bytes.fromhex(arg) for arg in args))
                     elif cmd == 'ping':
-                        c = args.pop(0) if args else '!'
+                        c = pop_arg('!')
                         client.ping(c.encode('ascii'))
+                    elif cmd in ('d', 'dump'):
+                        client.dump_ram().print()
+                    elif cmd in ('l', 'load'):
+                        i = int(pop_arg())
+                        client.load_task(i, args)
+                    elif cmd in ('r', 'run'):
+                        i = int(pop_arg())
+                        client.run_task(i, args)
+                    elif cmd in ('i', 'inspect'):
+                        i = int(pop_arg())
+                        client.inspect_task(i).print()
                     else:
                         print(f"Unrecognized command: {cmd!r}")
+                except Exception:
+                    logging.exception("Error handling command")
     finally:
         exit_cbreak()
     print("Bye!")
