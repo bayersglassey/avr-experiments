@@ -76,12 +76,16 @@ class Memory(NamedTuple):
         return len(self.data)
 
     def __add__(self, other: 'Memory') -> 'Memory':
+        if other is None:
+            return self
         if other.loc != self.loc + self.size:
             raise Exception(f"Not contiguous: {other.loc} != {self.loc + self.size}")
         return Memory(
             loc=self.loc,
             data=self.data + other.data,
         )
+
+    __radd__ = __add__
 
     def part(self, i: int, size: int) -> 'Memory':
         return Memory(
@@ -111,24 +115,28 @@ class Memory(NamedTuple):
 
 
 class TaskMemory(NamedTuple):
-    fields: Memory
-    code: Memory
-    heap: Memory
-    rest: Memory # FREE + STACK
+    # NOTE: fields and rest may be None, if we're the result of compilation
+    fields: Memory = None
+    code: Memory = None
+    heap: Memory = None
+    rest: Memory = None # FREE + STACK
 
     @property
-    def mem(self) -> Memory:
-        return self.code + self.heap + self.rest
+    def memory(self) -> Memory:
+        # NOTE: this works even if self.fields and self.rest are None
+        return self.fields + (self.code + self.heap) + self.rest
 
     def print(self, *args, **kwargs):
-        print(f"=== Fields:")
-        self.fields.print(*args, **kwargs)
+        if self.fields is not None:
+            print(f"=== Fields:")
+            self.fields.print(*args, **kwargs)
         print(f"=== Code:")
         self.code.print(*args, **kwargs)
         print(f"=== Heap:")
         self.heap.print(*args, **kwargs)
-        print(f"=== Rest:")
-        self.rest.print(*args, **kwargs)
+        if self.rest is not None:
+            print(f"=== Rest:")
+            self.rest.print(*args, **kwargs)
 
 
 class Client:
@@ -141,6 +149,15 @@ class Client:
     def close(self): self.serial.close()
     def __enter__(self): return self
     def __exit__(self, *args): self.close()
+
+    def refresh(self):
+        # Clear cached properties!.. for instance, if you uploaded a new
+        # version of minitasks onto the device, then its offsets etc may
+        # be different now!..
+        cached_attrs = [k for k, v in type(self).__dict__.items()
+            if isinstance(v, cached_property)]
+        for attr in cached_attrs:
+            self.__dict__.pop(attr, None)
 
     def read_uint16(self) -> int:
         return decode_uint16(self.read(2))
@@ -194,7 +211,7 @@ class Client:
     def builtin_names_by_location(self) -> Dict[int, str]:
         return dict(zip(self.builtin_locations, BUILTINS))
 
-    def compile_task(self, task_id: int, comp) -> Tuple[bytes, bytes]:
+    def compile_task(self, task_id: int, comp) -> TaskMemory:
         """Produces the CODE + HEAP sections for a task, suitable for passing
         to self.load_task"""
         if not isinstance(comp, Compilation):
@@ -204,7 +221,7 @@ class Client:
         builtin_locations = self.builtin_locations # kick off GET_BUILTIN_LOCATIONS if needed
         task_location = offsets.tasks_table_location + task_id * offsets.task_size
         code_location = task_location + offsets.task_mem_offset
-        heap_location = code_location + len(comp.instructions)
+        heap_location = code_location + len(comp.instructions) * 2
 
         # Generate CODE
         buf = bytearray()
@@ -219,13 +236,18 @@ class Client:
             buf.extend(encode_uint16(instruction))
         code = bytes(buf)
 
-        return code, comp.heap # CODE + HEAP
+        return TaskMemory(
+            code=Memory(code_location, code),
+            heap=Memory(heap_location, comp.heap),
+        )
 
     def load_task(self, task_id: int, comp):
         offsets = self.offsets # kick off GET_OFFSETS if needed
         if isinstance(comp, str):
             comp = compile(comp)
-        code, heap = self.compile_task(task_id, comp)
+        comp_task = self.compile_task(task_id, comp)
+        code = comp_task.code.data
+        heap = comp_task.heap.data
         size = len(code) + len(heap)
         if size > offsets.mem_size:
             raise Exception(f"Task payload too big: {size} > {offsets.mem_size}")

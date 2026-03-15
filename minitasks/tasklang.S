@@ -16,68 +16,30 @@ run_task_immediate:
     ; NOTE: intended to be called by C code, with arguments:
     ;  code, free, stack
 
-    movw r30, r24 ; load code pointer into Z
-    movw r28, r22 ; load heap pointer into Y
+    movw r28, r24 ; load code pointer into Y
+    movw r26, r22 ; load heap pointer into X
                   ;   ...which points to FREE, i.e. just past top of heap
 
-    ; set the end of task 0's memory to the value 0xee
-    ; NOTE: THIS WORKS!!!
-    ;ldi r22, 0xee
-    ;ldi r26, 0x53
-    ;ldi r27, 0x02
-    ;st X, r22
+    ; Set the stack pointer.
+    ; NOTE: it seems like we must set SPH before SPL; if we set SPL first, it
+    ; seems that SPH is always set to 0x08. No idea why. O_o
+    out SPH_IO_ADDR, r21  ; set stack pointer
+    out SPL_IO_ADDR, r20  ; ...
 
-    ; push some values on the stack, before we modify it
-    ldi r24, 0xaa
-    push r24
-    ldi r24, 0xaa
-    push r24
-    ldi r24, 0xaa
-    push r24
-    ldi r24, 0xaa
-    push r24
+    ; jump to next instruction, i.e. first instruction in task's CODE
+    rjmp next
 
-    ; point the stack pointer at the end of task 0's memory
-    ldi r24, 0x53 ; low byte of location of end of task 0's memory
-    ldi r25, 0x02 ; high byte of ...etc
-    out SPH_IO_ADDR, r25  ; set stack pointer
-    out SPL_IO_ADDR, r24  ; ...
-    in r24, SPL_IO_ADDR   ; get stack pointer
-    in r25, SPH_IO_ADDR   ; ...
-    sts _sp, r24          ; store in memory so we can inspect it
-    sts _sp+1, r25        ; ...
 
-    ; subtract from the stack pointer, "jumping" it (as if we pushed a bunch
-    ; of stuff)
-    ; NOTE: THIS WORKS!!!
-    ;in r24, SPL_IO_ADDR   ; get stack pointer
-    ;in r25, SPH_IO_ADDR   ; ...
-    ;sts _sp, r24          ; store in memory so we can inspect it
-    ;sts _sp+1, r25        ; ...
-    ;sbiw r24, 32          ; jump the stack a bit!..
-    ;out SPL_IO_ADDR, r24  ; set stack pointer
-    ;out SPH_IO_ADDR, r25  ; ...
+next:
+    ; Jump to the next threaded code instruction, and also increment the
+    ; threaded code instruction pointer.
+    ld r30, Y+   ; load whatever Y is pointing at into Z, and increment Y
+    ld r31, Y+   ; ...
+    ijmp         ; jump to the code pointed to by Z
 
-    ; Set stack pointer using its memory address instead of port?..
-    ;sts SPL, r24
-    ;sts SPH, r25
 
-    ; push some values onto the stack, after we've modified it
-    ldi r24, 0xbb
-    push r24
-    ldi r24, 0xbb
-    push r24
-    ldi r24, 0xbb
-    push r24
-    ldi r24, 0xbb
-    push r24
-
-    ; loop forever
-    ;call blink_forever
-    _loop:
-    rjmp _loop
-
-    ijmp ; jump to code pointed to by Z
+loop_forever:
+    rjmp loop_forever
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -101,8 +63,7 @@ builtin add
     push r25
 
     ; jump to the next threaded code instruction
-    adiw r30, 2 ; increment Z by 2 bytes, the width of a pointer
-    ijmp ; jump to the routine at which Z is now pointing
+    rjmp next
 
 builtin sub
     ; see the comments for "add"
@@ -114,8 +75,7 @@ builtin sub
     sbc r25, r23
     push r24
     push r25
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin mul
     rjmp builtin_halt
@@ -149,8 +109,7 @@ builtin bitnot
     com r25
     push r24
     push r25
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin bitand
     pop r25
@@ -161,8 +120,7 @@ builtin bitand
     and r25, r23
     push r24
     push r25
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin bitor
     pop r25
@@ -173,8 +131,7 @@ builtin bitor
     or r25, r23
     push r24
     push r25
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin bitxor
     pop r25
@@ -185,8 +142,7 @@ builtin bitxor
     eor r25, r23
     push r24
     push r25
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin getptr
     rjmp builtin_halt
@@ -202,52 +158,47 @@ builtin setptrc
 ;; PRIVATE BUILTINS
 
 builtin literal
-    adiw r30, 2 ; increment Z by 2
-
     ; load the integer argument from threaded code into a register pair
-    ld r24, Z
-    ldd r25, Z+1
+    ; (and increment Y so instead of pointing at the argument, it now points
+    ; at next threaded code instruction)
+    ld r24, Y+
+    ld r25, Y+
 
     ; push the integer argument onto the stack
     push r24
     push r25
 
     ; jump to the next threaded code instruction
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin store
     pop r25
     pop r24
-    adiw r30, 2    ; point Z at current instruction's argument
-    ld r26, Z      ; load the argument into X
-    ldd r27, Z+1   ; ...
-    st X+, r24     ; store into the memory pointed to by X
-    st X, r25      ; ...
-    adiw r30, 2
-    ijmp
+    ld r30, Y+     ; load the argument following this instruction into Z
+                   ; (and increment Y to next instruction)
+    ld r31, Y+     ; ...
+    st Z+, r24     ; store into the memory pointed to by Z
+    st Z+, r25     ; ...
+    rjmp next
 
 builtin load
-    adiw r30, 2    ; point Z at current instruction's argument
-    ld r26, Z      ; load the argument into X
-    ldd r27, Z+1   ; ...
-    ld r24, X+     ; load the word pointed to by X
-    ld r25, X      ; ...
+    ld r30, Y+     ; load the argument following this instruction into Z
+                   ; (and increment Y to next instruction)
+    ld r31, Y+     ; ...
+    ld r24, Z+     ; load the word pointed to by Z
+    ld r25, Z+     ; ...
     push r24
     push r25
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin jump
-    adiw r30, 2 ; increment Z by 2
-
     ; load the argument (which is a pointer to another instruction within
     ; the threaded code)
-    ld r24, Z
-    ldd r25, Z+1
+    ld r24, Y+
+    ld r25, Y+
 
-    ; copy the argument from register pair r25:r24 to r31:r30, i.e. Z
-    movw r30, r24
+    ; copy the argument from register pair r25:r24 to r29:r28, i.e. Y
+    movw r28, r24
 
     ; jump to the indicated instruction within the threaded code
     ijmp
@@ -259,22 +210,22 @@ builtin jumpif
     or r24, r25 ; we want to know if any of the bits are 1
     breq 2f
         ; TOS was 1
-        adiw r30, 2    ; point Z at current instruction's argument
-        ld r24, Z      ; load the argument
-        ldd r25, Z+1   ; ...
-        movw r30, r24  ; set Z to the argument
-        ijmp           ; jump to the argument
+        ld r24, Y+     ; load the argument
+        ld r25, Y+     ; ...
+        movw r28, r24  ; set Y to the argument
+        rjmp next      ; jump to the argument
     2:
         ; TOS was 0
-        adiw r30, 4 ; add 4 bytes: current instruction and its argument
-        ijmp
+        adiw r28, 2 ; add 2 bytes, so we point at next instruction instead
+                    ; of our argument
+        rjmp next   ; jump to next instruction
 
 builtin jumpifnot
     pop r25
     pop r24
     com r24 ; bitwise invert the TOS
     com r25 ; ...
-    jmp _jumpif
+    rjmp _jumpif
 
 builtin atomic
     rjmp builtin_halt
@@ -293,8 +244,7 @@ builtin neg
     neg	r24 ; ...
     ldi r23, 0
     sbc	r25, r23
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin dup
     ; TODO: see whether this can improved with LDS from stack pointer
@@ -304,8 +254,7 @@ builtin dup
     push r25
     push r24
     push r25
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin swap
     ; TODO: see whether this can improved with LDS from stack pointer
@@ -317,14 +266,12 @@ builtin swap
     push r25
     push r22
     push r23
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin drop
     pop r25
     pop r24
-    adiw r30, 2
-    ijmp
+    rjmp next
 
 builtin heap
     rjmp builtin_halt
@@ -340,10 +287,22 @@ builtin hpopc
     rjmp builtin_halt
 builtin hdropc
     rjmp builtin_halt
+
 builtin assert
-    rjmp builtin_halt
+    pop r25
+    pop r24
+    or r24, r25 ; we want to know if any of the bits are 1
+    breq 1f
+        ; TOS was 1: assertion passed!
+        rjmp next
+    1:
+        ; TOS was 0: assertion failed!
+        ; TODO: send a TASK_STOPPED message
+        rjmp loop_forever
+
 builtin error
-    rjmp builtin_halt
+    ; TODO: send a TASK_STOPPED message
+    rjmp loop_forever
 
 builtin set_led
     pop r25
@@ -353,8 +312,7 @@ builtin set_led
         sbi	0x05, 5 ; turn LED on
     1:
         ; jump to next instruction
-        adiw r30, 2
-        ijmp
+        rjmp next
     2:
         cbi	0x05, 5 ; turn LED off
         rjmp 1b
@@ -371,7 +329,11 @@ builtin logc
     rjmp builtin_halt
 builtin logi
     rjmp builtin_halt
+
 builtin halt
-    rjmp builtin_halt
+    ; TODO: send a TASK_STOPPED message
+    rjmp loop_forever
+
 builtin pause
-    rjmp builtin_halt
+    ; TODO: send a TASK_STOPPED message
+    rjmp loop_forever

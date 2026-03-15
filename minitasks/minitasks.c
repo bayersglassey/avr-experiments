@@ -9,6 +9,8 @@ uint16_t _sp = 0;
 ///////////////////////////////////////////////////////////////////////////////
 // TASK FUNCTIONS
 
+task_id_t current_task_id = 0;
+
 void tasks_init(void) {
     for (task_id_t i = 0; i < MAX_TASKS; i++) {
         task_t *task = &TASKS[i];
@@ -156,7 +158,7 @@ void handle_get_offsets(void) {
 void handle_get_builtin_locations(void) {
     uart_put_uint16((uint16_t) N_BUILTINS);
     for (uint16_t i = 0; i < N_BUILTINS; i++) {
-        uart_put_uint16((uint16_t) pgm_read_byte(&BUILTINS[i]));
+        uart_put_uint16(pgm_read_word(&BUILTINS[i]));
     }
 }
 
@@ -333,10 +335,11 @@ int main(void) {
         led_toggle();
         _delay_ms(200);
 
-        if (*state /*== TASK_STATE_STARTED*/) {
+        if (*state == TASK_STATE_STARTED) {
             char *code = task->mem;
             char *heap = task->free;
             char *stack = task->mem + TASK_MEM_SIZE - 1; // stack pointer should point at last byte of task's memory
+            current_task_id = 0;
             run_task_immediate(code, heap, stack); // ...and we will never return...
         }
     }
