@@ -112,9 +112,9 @@ _return_false:
 ; NOTE: the binary logical operator implementations below were tested using
 ; the Python client as follows:
 ;
-;   code = ' 0xee '.join(f'1 1 {op} 1 2 {op} 2 1 {op}' for op in ('==', '!=', '<', '<=', '>', '>='))
+;   code = ' 0xeeee '.join(f'1 1 {op} 1 2 {op} 2 1 {op}' for op in ('==', '!=', '<', '<=', '>', '>='))
 ;   c.run_task(0, code)
-;   _bytemap = {' ':b'\x00\xee', '0':b'\x00\x00', '1':b'\x00\x01'}
+;   _bytemap = {' ':b'\xee\xee', '0':b'\x00\x00', '1':b'\x00\x01'}
 ;   expected = b''.join(_bytemap[c] for c in ''.join(reversed('100 011 010 110 001 101')))
 ;   assert c.inspect_task(0).rest.data[-len(expected):] == expected
 ;
@@ -171,8 +171,8 @@ BUILTIN not
     pop r25
     pop r24
     or r24, r25 ; we want to know if any of the bits are 1
-    breq _return_false ; if it was true, return false
-    rjmp _return_true  ; if it was false, return true
+    breq _return_true   ; all bits were 0, i.e. it was false
+    rjmp _return_false  ; at least one bit was 1, i.e. it was true
 
 BUILTIN bitnot
     pop r25
@@ -288,35 +288,35 @@ BUILTIN jump
     ld r24, Y+
     ld r25, Y+
 
-    ; copy the argument from register pair r25:r24 to r29:r28, i.e. Y
+    ; copy the argument back into Y (i.e. into r29:r28)
     movw r28, r24
 
     ; jump to the indicated instruction within the threaded code
-    ijmp
+    rjmp _next
 
 BUILTIN jumpif
     pop r25
     pop r24
-    _jumpif:
-    or r24, r25 ; we want to know if any of the bits are 1
-    breq 2f
+    or r24, r25          ; we want to know if any of the bits are 1
+    breq _jumpif_false   ; jump if all bits were 0
+    _jumpif_true:
         ; TOS was 1
         ld r24, Y+     ; load the argument
         ld r25, Y+     ; ...
         movw r28, r24  ; set Y to the argument
-        rjmp _next      ; jump to the argument
-    2:
+        rjmp _next     ; jump to the argument
+    _jumpif_false:
         ; TOS was 0
-        adiw r28, 2 ; add 2 bytes, so we point at next instruction instead
-                    ; of our argument
+        adiw r28, 2  ; add 2 bytes, skipping over the argument so we point
+                     ; at next instruction
         rjmp _next   ; jump to next instruction
 
 BUILTIN jumpifnot
     pop r25
     pop r24
-    com r24 ; bitwise invert the TOS
-    com r25 ; ...
-    rjmp _jumpif
+    or r24, r25          ; we want to know if any of the bits are 1
+    breq _jumpif_true    ; jump if any bits were 1
+    rjmp _jumpif_false   ; else...
 
 BUILTIN atomic
     ; start an atomic "block" by disabling interrupts
@@ -393,7 +393,7 @@ BUILTIN assert
     pop r25
     pop r24
     or r24, r25 ; we want to know if any of the bits are 1
-    breq 1f
+    breq 1f     ; all bits were 0
         ; TOS was 1: assertion passed!
         rjmp _next
     1:
@@ -408,15 +408,13 @@ BUILTIN error
 BUILTIN set_led
     pop r25
     pop r24
-    or r24, r25
-    breq 2f ; if TOS was zero, turn LED off
+    or r24, r25 ; we want to know if any of the bits are 1
+    breq 1f     ; all bits were 0
         sbi	0x05, 5 ; turn LED on
-    1:
-        ; jump to next instruction
         rjmp _next
-    2:
+    1:
         cbi	0x05, 5 ; turn LED off
-        rjmp 1b
+        rjmp _next
 
 BUILTIN sleep
     rjmp builtin_halt

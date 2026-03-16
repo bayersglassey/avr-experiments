@@ -391,7 +391,7 @@ def compile(parsed) -> Compilation:
     def push_value(value: int):
         instructions.append(value)
 
-    def _process(parsed, strong_block=True, start_of_block=None, update_with_end_of_block=None):
+    def _process(parsed, strong_block=True, start_of_block=None, update_with_end_of_block=None, add_to_end_of_block=0):
         if strong_block:
             start_of_block = len(instructions)
             update_with_end_of_block = []
@@ -402,16 +402,16 @@ def compile(parsed) -> Compilation:
                 push_builtin('_jumpif')
                 i = len(instructions)
                 push_code_location(None) # jump location, updated below
-                _process(data, False, start_of_block, update_with_end_of_block)
+                _process(data, False, start_of_block, update_with_end_of_block, add_to_end_of_block)
                 instructions[i] = len(instructions) # update jump location
             elif tag == 'loop':
                 i = len(instructions)
-                _process(data)
+                _process(data, add_to_end_of_block=2)
                 push_builtin('_jump')
                 push_code_location(i)
             elif tag == 'atomic':
                 push_builtin('_atomic')
-                _process(data, False, start_of_block, update_with_end_of_block)
+                _process(data, False, start_of_block, update_with_end_of_block, add_to_end_of_block)
                 push_builtin('_end_atomic')
             elif tag == 'block':
                 _process(data)
@@ -446,7 +446,7 @@ def compile(parsed) -> Compilation:
         if strong_block:
             # Update any instructions, e.g. break, which needed to know the
             # location of the end of the block
-            end_of_block = len(instructions)
+            end_of_block = len(instructions) + add_to_end_of_block
             for i in update_with_end_of_block:
                 instructions[i] = end_of_block
 

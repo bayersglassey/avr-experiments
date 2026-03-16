@@ -103,13 +103,15 @@ class Memory(NamedTuple):
                 sline = line.hex(' ')
             elif style == 'i':
                 sline = ' '.join(map(str, parse_ints(line)))
+            elif style == 'hi':
+                sline = ' '.join(map(hex, parse_ints(line)))
             elif style == 'c':
                 sline = ''.join(c if c.isprintable() else '�'
                     for c in line.decode('ascii', 'replace'))
             elif style == 'r':
                 sline = repr(line)
             else:
-                raise Exception(f"Got bad style {style!r}, expected one of 'x', 'i', 'c', 'r'")
+                raise Exception(f"Got bad style {style!r}, expected one of 'x', 'i', 'hi', 'c', 'r'")
             print(f'0x{hex(loc + i)[2:].rjust(4, "0")}: {sline}')
             i += w
 
@@ -227,7 +229,7 @@ class Client:
         buf = bytearray()
         instructions = list(comp.instructions)
         for i in comp.code_locations:
-            instructions[i] += code_location
+            instructions[i] = code_location + instructions[i] * 2
         for i in comp.heap_locations:
             instructions[i] += heap_location
         for i in comp.builtin_locations:
