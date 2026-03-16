@@ -18,5 +18,5 @@ in C), plus a client (written in Python) for compiling programs written in
 a little language (whose runtime is written in assembly) and then sending
 them over USB to the OS to be run as concurrent tasks.
 
-That's all in the minitasks/ subdirectory of this repo... start by looking
+That's all in the [minitasks/](minitasks/) subdirectory of this repo... start by looking
 at the README!

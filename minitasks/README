@@ -32,10 +32,10 @@ See also:
 * https://github.com/avrdudes/avr-libc
 * https://github.com/avrdudes/avrdude
 
-The core of the OS (scheduler, resource queues, etc) is written in C.
+The core of the OS (scheduler, etc) is written in C.
 See: minitasks.h, minitasks.c.
 
-The commands/tasks you send to the OS use a tiny programming language, called
+The programs you send to the OS use a tiny programming language, called
 "tasklang", written in assembly. It's described more fully below.
 See: tasklang.py (for the compiler), tasklang.S (for the runtime)
 
@@ -76,10 +76,9 @@ The language is very simple: everything is an integer, integers can also be
 interpreted as pointers, all variables are global, and there is no support
 for defining new functions/subroutines, only for calling built-in ones written
 in assembly.
-
-However, the purpose of the language isn't to be expressive, but to be easy
-to reason about and debug, and just powerful enough to play with multitasking
-concepts like scheduling, resources, and inter-task communcation.
+But that's ok, because the purpose of the language isn't to be expressive, but
+to be easy to reason about and debug, and just powerful enough to play with
+multitasking concepts like scheduling, resources, and inter-task communcation.
 
 Here's an example program, which does some math and then ends:
 
@@ -201,7 +200,7 @@ client, or they can be hooked up to other tasks.
 ### TASK MEMORY LAYOUT
 
 The OS consists of a kernel, and whatever tasks are running.
-There is a task table of fixed size:
+There is a task structure, and a task table of fixed size (see minitasks.h):
 
     struct task TASKS[MAX_TASKS];
 
@@ -230,6 +229,8 @@ checks.
 In fact, while a task is running, the microchip's stack pointer is set to
 the top of that task's stack, and any assembly routines called by the task
 (or triggered by interrupts!..) use that task's stack space.
+NOTE: having interrupts use the active task's stack is... kind of not great.
+But it simplifies the implementation, so...
 
 
 ###############################################################################
@@ -299,17 +300,12 @@ Here are the most important types of message sent by the client:
     structure)
 
 Here are the most important types of message sent by the kernel:
-* KERNEL_LOG
-  * kernel sends a log message
-* TASK_LOG
-  * kernel sends a task id
-  * kernel sends a log message
 * TASK_STOPPED
   * kernel sends a task id
   * kernel sends a reason why task was stopped
     * 0: task stopped normally (e.g. reached the end of its code, or the
       tasklang "halt" instruction)
-    * 1: failed assertion (tasklang "assert" instruction)
+    * 1: error or failed assertion (tasklang "error" or "assert" instructions)
   * NOTE: this message is *not* sent when a task is stopped by the
     STOP_TASK message.
 
@@ -319,9 +315,173 @@ to deliver our data perfectly every time!..
 
 
 ###############################################################################
+### THE TASKLANG COMPILER
+
+The tasklang compiler is written in Python (see tasklang.py).
+It produces data objects with enough information to generate the raw bytes of
+threaded code later on (once the client has connected to the device, and
+gotten various offsets and pointer values from it).
+
+    In [32]: from tasklang import compile
+
+    In [33]: comp = compile('0 =state loop { state dup set_led ! =state 1000
+    sleep }')
+
+    In [34]: comp.instructions
+    Out[34]: [22, 0, 23, 0, 24, 0, 31, 39, 13, 23, 0, 22, 1000, 40, 25, 4, 46]
+
+    In [35]: comp.heap_locations
+    Out[35]: {3, 5, 10}
+
+    In [36]: comp.print()
+    vars:
+      state: 0
+    heap: b'\x00\x00'
+    instructions:
+    000: _literal
+    001: 0
+    002: _store
+    003: 0
+    004: _load
+    005: 0
+    006: dup
+    007: set_led
+    008: not
+    009: _store
+    010: 0
+    011: _literal
+    012: 1000
+    013: sleep
+    014: _jump
+    015: 4
+    016: halt
+
+
+###############################################################################
+### THE PYTHON CLIENT INTERFACE
+
+The client's code is in minitasks.py.
+By default, it opens /dev/ttyUSBx (for x in 0, 1, 2, etc) and configures the
+resulting file descriptor for serial communication (raw mode, correct baud
+rate, etc).
+There are methods corresponding to the major message types for the protocol
+described above.
+
+    In [1]: from minitasks import Client
+
+    In [2]: c = Client()
+
+    In [3]: c.get_offsets()
+    Out[3]: Offsets(ram_start=256, ram_end=2304, tasks_table_location=337,
+    max_tasks=4, task_size=389, task_mem_offset=5)
+
+Arbitrary memory locations can be read from & written to, including a full
+memory dump.
+This is all achieved by sending messages to the OS over USB, see above.
+The ATmega 328p has 2KB of SRAM, but registers and I/O ports are mapped above
+that, so the SRAM dump begins at address 256:
+
+    In [53]: mem = c.dump_ram()
+
+    In [54]: mem.loc, mem.size
+    Out[54]: (256, 2048)
+
+    In [55]: mem.part(64, 128).print(w=16) # print 128 bytes at offset 64
+    0x0140: 65 00 42 61 64 20 70 6f 6e 67 00 00 00 00 00 00
+    0x0150: 00 01 3e 00 9e 01 1e 01 94 01 23 01 9a 01 2a 01
+    0x0160: 9a 01 0a 01 23 01 9c 01 2a 01 9c 01 3f 01 92 01
+    0x0170: 2a 01 9c 01 1e 01 20 00 95 00 2a 01 9a 01 18 01
+    0x0180: 2a 01 9a 01 1e 01 01 00 8c 00 23 01 9a 01 31 01
+    0x0190: 5e 01 83 01 48 45 4c 4c 4f 00 99 01 00 00 00 00
+    0x01a0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0x01b0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+Let's load a tasklang program into task slot 0.
+Here is a program which converts a statically-allocated string literal
+to uppercase (by subtracting 32 from each of its characters):
+
+    In [70]: c.load_task(0, '"hello" =msg loop { msg $c =c c while c
+    32 - msg =$c msg 1 + =msg }')
+
+The task hasn't started yet; we can inspect its memory:
+
+    In [71]: task = c.inspect_task(0)
+
+    In [72]: task.print(w=16)
+    === Fields:
+    0x0151: 00 3e 00 9e 01
+    === Code:
+    0x0156: 1e 01 94 01 23 01 9a 01 2a 01 9a 01 0a 01 23 01
+    0x0166: 9c 01 2a 01 9c 01 3f 01 92 01 2a 01 9c 01 1e 01
+    0x0176: 20 00 95 00 2a 01 9a 01 18 01 2a 01 9a 01 1e 01
+    0x0186: 01 00 8c 00 23 01 9a 01 31 01 5e 01 83 01
+    === Heap:
+    0x0194: 68 65 6c 6c 6f 00 00 00 00 00
+    === Free + Stack:
+    0x019e: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0x01ae: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    ...etc...
+    0x02ae: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0x02be: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0x02ce: 00 00 00 00 00 00 00 00
+
+Let's examine the ASCII characters present in the task's heap:
+
+    In [73]: task.heap.print('c')
+    0x016e: hello�����
+
+Notice how the "hello" string literal was loaded into the heap.
+The Unicode question marks after it are non-ASCII characters, including the
+string's terminating NUL, and space for the program's 2 variables (msg and c).
+Now let's start the task, and then inspect it again.
+
+    In [74]: c.start_task(0)
+
+    In [75]: task = c.inspect_task(0)
+
+    In [76]: task.print(w=16)
+    === Fields:
+    0x0151: 01 3e 00 9e 01
+    === Code:
+    0x0156: 1e 01 94 01 23 01 9a 01 2a 01 9a 01 0a 01 23 01
+    0x0166: 9c 01 2a 01 9c 01 3f 01 92 01 2a 01 9c 01 1e 01
+    0x0176: 20 00 95 00 2a 01 9a 01 18 01 2a 01 9a 01 1e 01
+    0x0186: 01 00 8c 00 23 01 9a 01 31 01 5e 01 83 01
+    === Heap:
+    0x0194: 48 45 4c 4c 4f 00 99 01 00 00
+    === Free + Stack:
+    0x019e: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0x01ae: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    ...etc...
+    0x02ae: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    0x02be: 00 00 00 00 00 00 00 01 83 01 9e 01 92 00 01 02
+    0x02ce: d5 01 51 02 00 00 00 8b
+
+Note how there is now some junk on the stack (in the lines labeled 0x02be
+and 0x02ce).
+But our program wasn't supposed to leave anything on the stack... where did
+that stuff come from?.. in fact, it's from the USART Rx interrupt handler,
+while it was handling our INSPECT_TASK message, and sending us back a dump of
+the task's memory!..
+
+Anyway, let's make sure our program did was it was supposed to, which is to
+convert the string literal to uppercase:
+
+    In [77]: task.heap.print('c')
+    0x0194: HELLO�����
+
+Hooray!
+Anyway, that gives you a flavour of what it's like using this system.
+Various niceties are built on top of the above, like the ability to run a
+program and wait for it to complete (by waiting for a TASK_STOPPED message
+from the kernel), or put your terminal into cbreak mode so you can "talk"
+directly to the tasklang OS and its programs, etc.
+
+
+###############################################################################
 ### TASKLANG RUNTIME
 
-The "tasklang" runtime is written in assembly.
+The "tasklang" runtime is written in assembly (see tasklang.S).
 It uses threaded code, i.e. code consists of arrays of pointers to subroutines.
 The target architecture is the ATmega 328p, which is in the AVR family of
 microchips, which share a common instruction set:
