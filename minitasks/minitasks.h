@@ -23,7 +23,7 @@
 
 
 // Maximum number of tasks in the system
-#define MAX_TASKS 4
+#define MAX_TASKS 5
 
 #define TASK_SIZE (sizeof(task_t))
 

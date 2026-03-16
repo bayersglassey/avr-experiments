@@ -371,7 +371,7 @@ described above.
 
     In [2]: c = Client()
 
-    In [3]: c.get_offsets()
+    In [3]: c.get_offsets() # send GET_OFFSETS and interpret the response
     Out[3]: Offsets(ram_start=256, ram_end=2304, tasks_table_location=337,
     max_tasks=4, task_size=389, task_mem_offset=5)
 
@@ -596,6 +596,28 @@ argument may be a pointer to another threaded code instruction:
 
 ###############################################################################
 ### THE SCHEDULER & CONTEXT SWITCHING
+
+With 2KB, we can only do so much... there is a tradeoff between the maximum
+number of tasks, and the size of each task's available memory, both of which
+are fixed (see minitasks.h).
+It's currently set to something like 5 tasks with 384 bytes of memory each.
+So, instead of trying to implement a fancy scheduling algorithm with resource
+queues and things, I've kept it simple and just had the kernel loop through
+every possible task, handling I/O and running its program for a bit, before
+switching context to the next task.
+We can use an AVR timer interrupt to kick off the body of this loop at a
+regular rate. But what should that rate be?..
+
+For USB communication, I'm using a baud of 38400, i.e. 38.4kHz.
+The minitasks OS doesn't do any input/output buffering, so it needs to handle
+each individual character of I/O as quickly as possible!..
+The ATmega 328p's CPU runs at 16MHz on the default clock, i.e. one cycle
+takes 1/16,000,000 seconds.
+The cycle counts for AVR instructions are given here:
+https://ww1.microchip.com/downloads/en/DeviceDoc/AVR-Instruction-Set-Manual-DS40002198A.pdf
+Looking at various tasklang instruction assembly routines, it looks like they
+generally take about 16 cycles.
+So tasklang instructions can be executed at a rate of about 1MHz.
 
 TODO...
 

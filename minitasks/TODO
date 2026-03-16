@@ -1,10 +1,4 @@
 
-* update README's "tasklang runtime" section
-    * Y is code pointer
-    * X is heap pointer (errr, free pointer?.. cos it points to FREE)
-    * r22 - r25 and Z need to be saved during context switches
-    * task->free should be updated to X on context switch
-
 * implement TASK_STOPPED
     get the client to recognize
     it, make sure we can run programs really quickly, etc.
