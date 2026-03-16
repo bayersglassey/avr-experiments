@@ -5,14 +5,23 @@
     * r22 - r25 and Z need to be saved during context switches
     * task->free should be updated to X on context switch
 
+* implement TASK_STOPPED
+    get the client to recognize
+    it, make sure we can run programs really quickly, etc.
+    That also lets us write some unit tests using the Python client to
+    run small programs to completion & examine their outputs.
+
 * implement multitasking
     * timer interrupt
+        Let's have this be the only interrupt?..
+        Keeps things super simple: the kernel just loops through all tasks,
+        feeding them input if they need it, maybe running them for a bit,
+        then handling their output if any.
+        Will we be ok without the UART receive interrupt?.. I think so, as
+        long as our kernel's loop is fast enough.
     * context switching
-        * task->free should be updated to X on context switch!..
-          ...or ideally, at the start of every interrupt.
-          But that's probably not gonna happen for interrupts written in C.
-          Or... maybe let's just simplify, and have the heap instructions
-          call a C function which updates current task's free pointer?..
+        * r22 - r25 and Z need to be saved during context switches
+        * task->free should be updated to X on context switch
     * run queue
         ...OR, can we cheat for now?.. I wanted to get this project done in
         a week, but figuring out how to assign to the dang stack pointer
@@ -27,10 +36,6 @@
         but not implement UART stuff for tasks yet.
         Instead, let's just make sure we can see multiple tasks blinking the
         LED at different rates, for now.
-        And also let's implement TASK_STOPPED, get the client to recognize
-        it, make sure we can run programs really quickly, etc.
-        That also lets us write some unit tests using the Python client to
-        run small programs to completion & examine their outputs.
 
 * resource queues
     * run queue

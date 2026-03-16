@@ -335,37 +335,35 @@ In particular, memory (SRAM) can only be accessed via specific register pairs:
 X (r27:r26), Y (r29:r28), and Z (r31:r30).
 Memory reads/writes are possible via X, Y and Z, but indirect jumps are only
 possible via Z.
-Therefore, the tasklang runtime uses Z as a pointer to the current instruction
-within the threaded code.
+The tasklang runtime uses X as a pointer to the top of the heap, and Y as a
+pointer to the current instruction within the threaded code.
+When it comes time to jump to the next instruction, we load the jump address
+from RAM into Z using Y, and then jump to the address in Z.
 
 The AVR architecture has a stack pointer, and dedicated stack intructions:
 PUSH, POP, CALL, RET, and their variants.
 The tasklang runtime uses this stack as well.
 If tasklang were a proper FORTH, it would have a data stack and a call stack,
 and so besides the architecture's built-in stack pointer, we would need to
-choose between X and Y to implement the second stack.
-However, we have avoided having to make this choice, by not bothering to
-implement functions in tasklang!.. so it only has a data stack, which is
-implemented using the architecture's stack, which is also used by subroutines
-written in C and assembly.
+choose a register pair to be the second stack pointer.
+That would be tricky, because we're already using all 3 register pairs which
+can access SRAM, see above!..
+However, we have avoided this issue altogether, by not bothering to implement
+functions in tasklang. So it only has a data stack, no call stack.
+(The data stack is also used as a call stack by subroutines written in C and
+assembly, just not by tasklang instructions.)
 
-(The reason FORTH requires two stacks is that one is used for function arguments
-and return values, and the other is used for function return locations and
-local variables.
+NOTE: the reason FORTH requires two stacks is that one is used for function
+arguments and return values, and the other is used for function return
+locations and local variables.
 Subroutines written in C and assembly get away with using 1 stack because they
-can pass arguments and return values in registers.)
-
-So, we've seen that:
-* tasklang uses the Z register pair (r31:r30) to point to current instruction
-  within threaded code (i.e. task's CODE memory section)
-* tasklang uses the built-in stack as a data stack, and for calling C/asm
-  routines (so, when a task is running, the stack pointer divides the task's
-  FREE and STACK memory sections)
+can pass arguments and return values in registers (which would be an approach
+to consider if we wanted to add functions to tasklang).
 
 Now, what does the execution loop look like?..
 Each tasklang instruction is implemented as an assembly routine.
-E.g. the tasklang "+" instruction compiles to a pointer to the "add" routine.
-The "add" routine is implemented something like this:
+E.g. the tasklang "+" instruction compiles to a pointer to a routine which
+looks something like this:
 
     add:
 
@@ -385,47 +383,55 @@ The "add" routine is implemented something like this:
         push r24
         push r25
 
-        ; jump to the "next" routine
-        adiw r30, 2 ; increment Z by 2 bytes, the width of a pointer
-        ijmp ; jump to the routine at which Z is now pointing
+        ; jump to the next tasklang instruction
+        ; (this is done at the end of almost every tasklang instruction)
+        rjmp next
+
+    next:
+
+        ; Jump to the next threaded code instruction, and also increment the
+        ; threaded code instruction pointer.
+
+        ; load whatever Y is pointing at into Z, and post-increment Y
+        ld r30, Y+
+        ld r31, Y+
+
+        ; jump to the code pointed to by Z
+        ijmp
 
 Some tasklang instructions take an argument, i.e. the threaded code contains
 a code pointer followed by an argument.
 For instance, integer literals use a subroutine like this:
 
-    _literal:
-
-        adiw r30, 2 ; increment Z by 2
+    literal:
 
         ; load the integer argument from threaded code into a register pair
-        ld r24, Z
-        ldd r25, Z+1
+        ; (and post-increment Y to point at the next tasklang instruction)
+        ld r24, Y+
+        ld r25, Y+
 
         ; push the integer argument onto the stack
         push r24
         push r25
 
-        ; jump to the "next" routine (as did "add")
-        adiw r30, 2
-        ijmp
+        ; jump to the next tasklang instruction
+        rjmp next
 
-In some cases, e.g. the tasklang _jump instruction used for looping etc, the
+In some cases, e.g. the tasklang jump instruction used for looping etc, the
 argument may be a pointer to another threaded code instruction:
 
-    _jump:
-
-        adiw r30, 2 ; increment Z by 2
+    jump:
 
         ; load the argument (which is a pointer to another instruction within
-        ; the threaded code)
-        ld r24, Z
-        ldd r25, Z+1
+        ; the threaded code) from threaded code into a register pair
+        ld r24, Y+
+        ld r25, Y+
 
-        ; copy the argument from register pair r25:r24 to r31:r30, i.e. Z
-        movw r30, r24
+        ; copy the register pair into Y (i.e. r29:r28)
+        movw r28, r24
 
         ; jump to the indicated instruction within the threaded code
-        ijmp
+        rjmp next
 
 
 ###############################################################################
