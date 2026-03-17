@@ -1,4 +1,5 @@
 #!/bin/bash
 set -euo pipefail
 
-avrdude -c arduino -p m328p -P /dev/ttyUSB0 -b 57600 -D -U "flash:w:$PROJFILE.hex:i"
+TTY=`./get_ttyusb.sh`
+avrdude -c arduino -p m328p -P "$TTY" -b 57600 -D -U flash:w:minitasks.hex:i

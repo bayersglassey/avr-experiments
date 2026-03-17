@@ -5,11 +5,9 @@ avr-gcc \
     --std=c99 \
     -mmcu=atmega328p \
     -Wall \
-    -Werror \
     -Wno-unused-function \
     -Os \
     "$@" \
-    -o minitasks.elf \
-    tasklang.S minitasks.c
+    -o "$PROJFILE.elf" "$PROJFILE.c"
 
-avr-objcopy -j .text -j .data -O ihex minitasks.elf minitasks.hex
+avr-objcopy -j .text -j .data -O ihex "$PROJFILE.elf" "$PROJFILE.hex"

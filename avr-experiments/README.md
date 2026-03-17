@@ -10,13 +10,6 @@ See also: https://en.wikipedia.org/wiki/AVR_microcontrollers
 
 This repo contains my initial experiments with these things...
 
-
-## MINITASKS
-
-This is the main project in here! It's a little multi-tasking OS (written
-in C), plus a client (written in Python) for compiling programs written in
-a little language (whose runtime is written in assembly) and then sending
-them over USB to the OS to be run as concurrent tasks.
-
-That's all in the [minitasks/](minitasks/) subdirectory of this repo... start by looking
-at the README!
+NOTE: the "minitasks" project ended up taking over the whole repo, so this
+avr-experiments directory is now just a bunch of old stuff.
+It used to be the root of the repo!
